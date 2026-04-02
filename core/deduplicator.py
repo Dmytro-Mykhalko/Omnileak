@@ -28,9 +28,9 @@ def _extract_core(value):
 
     Examples::
 
-        SECRET=Xk9mPqRsT...   -> Xk9mPqRsT...
-        "$password = 'pass';"  -> pass
-        AKIAIOSFODNN7EXAMPLE  -> AKIAIOSFODNN7EXAMPLE  (unchanged)
+        SECRET=Xk9mPqRsT4vW   -> Xk9mPqRsT4vW
+        "$variable = 'val';"   -> val
+        AKIAIOSFODNN7EXAMPLE   -> AKIAIOSFODNN7EXAMPLE  (unchanged)
     """
     v = _normalize(value)
     v = _LEADING_ASSIGNMENT_RE.sub("", v)
