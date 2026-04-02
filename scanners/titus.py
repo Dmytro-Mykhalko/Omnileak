@@ -62,22 +62,66 @@ class TitusScanner(BaseScanner):
             file_path = file_path[len(self.repo_path):].lstrip("/")
         return file_path
 
-    def _get_commit_for_line(self, file_path, line_number):
-        """Use git blame to find the commit that last touched a specific line."""
+    def _get_commit_for_line(self, file_path, line_number, blob_id=""):
+        """Use git blame to find the commit that last touched a specific line.
+
+        If the file no longer exists on HEAD (deleted in a later commit),
+        we locate a revision that contained the blob via
+        ``git log --find-object`` and retry blame against that revision.
+        """
         if not file_path or not line_number:
             return ""
         abs_repo = os.path.abspath(self.repo_path)
+
+        # 1. Try blame on current HEAD
+        commit = self._blame_at_revision(abs_repo, file_path, line_number)
+        if commit:
+            return commit
+
+        # 2. File may have been deleted — find a revision that had the blob
+        if blob_id:
+            rev = self._find_revision_for_blob(abs_repo, blob_id)
+            if rev:
+                commit = self._blame_at_revision(abs_repo, file_path, line_number, rev)
+                if commit:
+                    return commit
+
+        return ""
+
+    @staticmethod
+    def _blame_at_revision(repo_dir, file_path, line_number, revision=None):
+        """Run git blame for a single line, optionally at a specific revision."""
+        cmd = ["git", "blame", "-L", f"{line_number},{line_number}", "--porcelain"]
+        if revision:
+            cmd.append(revision)
+        cmd.append("--")
+        cmd.append(file_path)
         try:
             result = subprocess.run(
-                ["git", "blame", "-L", f"{line_number},{line_number}",
-                 "--porcelain", file_path],
+                cmd,
                 capture_output=True, text=True,
-                cwd=abs_repo, timeout=10, check=False,
+                cwd=repo_dir, timeout=10, check=False,
             )
             if result.returncode == 0 and result.stdout:
                 return result.stdout.split()[0]
-        except Exception as e:
-            logger.debug(f"[{self.tool_name}] git blame failed for {file_path}:{line_number}: {e}")
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _find_revision_for_blob(repo_dir, blob_id):
+        """Return the earliest commit (across all branches) that contains *blob_id*."""
+        try:
+            result = subprocess.run(
+                ["git", "log", "--all", "--find-object", blob_id, "--format=%H"],
+                capture_output=True, text=True,
+                cwd=repo_dir, timeout=15, check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # last line = earliest commit that references this blob
+                return result.stdout.strip().splitlines()[-1]
+        except Exception:
+            pass
         return ""
 
     def parse_results(self):
@@ -146,8 +190,8 @@ class TitusScanner(BaseScanner):
                 file_path = blob_path_map.get(blob_id, "")
                 file_path = self._make_path_relative(file_path)
 
-                # Resolve commit hash via git blame
-                commit_hash = self._get_commit_for_line(file_path, line_number)
+                # Resolve commit hash via git blame (pass blob_id for deleted-file fallback)
+                commit_hash = self._get_commit_for_line(file_path, line_number, blob_id=blob_id)
 
                 results.append({
                     "id": self.generate_id(repo, file_path, secret),
