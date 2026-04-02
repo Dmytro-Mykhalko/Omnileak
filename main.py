@@ -99,7 +99,7 @@ def print_summary(findings, duration):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Multi-Tool Secret Scanner — scan repos for hardcoded secrets with multiple tools."
+        description="Omnileak — scan Git repos for hardcoded secrets with multiple tools."
     )
     parser.add_argument(
         "--repo", required=True,

@@ -1,4 +1,4 @@
-# 🔐 Multi-Tool Secret Scanner
+# 🔐 Omnileak
 
 A Python-based orchestrator that scans Git repositories for hardcoded secrets using **four industry-standard tools at once**, deduplicates their results, and produces clean reports ready for review.
 
@@ -7,7 +7,7 @@ A Python-based orchestrator that scans Git repositories for hardcoded secrets us
 | [Gitleaks](https://github.com/gitleaks/gitleaks) | Regex-based secret detection | ✅ Full git history |
 | [Trufflehog](https://github.com/trufflesecurity/trufflehog) | Entropy + regex detection with verified secrets | ✅ Full git history |
 | [Detect Secrets](https://github.com/Yelp/detect-secrets) | Yelp's plugin-based scanner | ❌ Current files only* |
-| [Titus](https://github.com/praetorian-inc/titus) | High-perf scanner with 487 rules (successor to NoseyParker) | ✅ Full git history |
+| [Titus](https://github.com/praetorian-inc/titus) | High-perf scanner with 487 rules (successor to Noseyparker) | ✅ Full git history |
 
 \* For detect-secrets, commit hashes are resolved via `git blame`.
 
@@ -40,8 +40,9 @@ A Python-based orchestrator that scans Git repositories for hardcoded secrets us
 ## Quick Start
 
 ```bash
-# 1. Clone / unzip the project
-cd multi_tool_scanner
+# 1. Clone the project
+git clone https://github.com/Dmytro-Mykhalko/Omnileak.git
+cd Omnileak
 
 # 2. Create a virtual environment and install Python deps
 python3 -m venv .venv
@@ -219,7 +220,7 @@ Tests use mock data and mocked subprocesses — **no CLI tools need to be instal
 ## Project Structure
 
 ```
-multi_tool_scanner/
+Omnileak/
 ├── main.py                     ← CLI entry point & orchestrator
 ├── requirements.txt            ← Python dependencies
 ├── install_deps.sh             ← Optional manual tool installer

@@ -136,7 +136,7 @@ class TestDeduplicator:
         assert "trufflehog" in result[0]["found_by"]
 
     def test_cross_tool_different_paths_same_secret(self):
-        """Same secret found with different file paths (e.g. noseyparker has
+        """Same secret found with different file paths (e.g. titus has
         empty path) — Pass 2 merges them by secret-only key."""
         dedup = Deduplicator()
         dedup.load([
@@ -158,7 +158,7 @@ class TestDeduplicator:
                 "secret_type": "AWS",
                 "secret_value": "AKIAEXAMPLE",
                 "commit_hash": "",
-                "found_by": ["noseyparker"],
+                "found_by": ["titus"],
             },
         ])
         result = dedup.deduplicate()
@@ -166,4 +166,4 @@ class TestDeduplicator:
         assert result[0]["file_path"] == "src/config.py"
         assert result[0]["commit_hash"] == "abc"
         assert "gitleaks" in result[0]["found_by"]
-        assert "noseyparker" in result[0]["found_by"]
+        assert "titus" in result[0]["found_by"]

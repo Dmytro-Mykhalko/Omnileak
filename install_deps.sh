@@ -19,7 +19,7 @@ else
 fi
 
 echo "============================================="
-echo "  Multi-Tool Scanner — Dependency Installer"
+echo "  Omnileak — Dependency Installer"
 echo "  OS: $OS | Arch: $ARCH"
 echo "============================================="
 echo ""
@@ -70,7 +70,7 @@ else
 fi
 
 # --------------------------------------------------
-# 4. Titus (replaces Noseyparker)
+# 4. Titus (successor to Noseyparker)
 # --------------------------------------------------
 if command -v titus &> /dev/null; then
     echo "[✓] Titus is already installed: $(command -v titus)"
