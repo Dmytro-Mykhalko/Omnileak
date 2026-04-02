@@ -11,7 +11,7 @@ class TrufflehogScanner(BaseScanner):
         super().__init__(repo_path, output_dir, timeout)
         self.tool_name = "Trufflehog"
         self.cli_command = "trufflehog"
-        self.raw_output = os.path.join(output_dir, "trufflehog_raw.json")
+        self.raw_output = os.path.join(output_dir, self._prefixed("trufflehog_raw.json"))
 
     def run_scan(self):
         cmd = [

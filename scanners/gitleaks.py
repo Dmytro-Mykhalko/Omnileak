@@ -11,7 +11,7 @@ class GitleaksScanner(BaseScanner):
         super().__init__(repo_path, output_dir, timeout)
         self.tool_name = "Gitleaks"
         self.cli_command = "gitleaks"
-        self.raw_output = os.path.join(output_dir, "gitleaks_raw.json")
+        self.raw_output = os.path.join(output_dir, self._prefixed("gitleaks_raw.json"))
 
     def run_scan(self):
         cmd = [

@@ -12,7 +12,7 @@ class DetectSecretsScanner(BaseScanner):
         super().__init__(repo_path, output_dir, timeout)
         self.tool_name = "DetectSecrets"
         self.cli_command = "detect-secrets"
-        self.raw_output = os.path.join(output_dir, "detect_secrets_raw.json")
+        self.raw_output = os.path.join(output_dir, self._prefixed("detect_secrets_raw.json"))
 
     def run_scan(self):
         """detect-secrets must be run from inside the target directory

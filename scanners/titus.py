@@ -29,7 +29,7 @@ class TitusScanner(BaseScanner):
         super().__init__(repo_path, output_dir, timeout)
         self.tool_name = "Titus"
         self.cli_command = "titus"
-        self.raw_output = os.path.join(output_dir, "titus_raw.json")
+        self.raw_output = os.path.join(output_dir, self._prefixed("titus_raw.json"))
         self.datastore = os.path.join(output_dir, "titus.ds")
 
     def run_scan(self):

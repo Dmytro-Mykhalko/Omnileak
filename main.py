@@ -139,10 +139,11 @@ def main():
         all_findings.extend(findings)
 
         # Per-repo reports
+        repo_name = os.path.basename(repo.rstrip("/"))
         dedup = Deduplicator()
         dedup.load(findings)
         repo_deduped = dedup.deduplicate()
-        reporter = Reporter(repo_out)
+        reporter = Reporter(repo_out, repo_name=repo_name)
         reporter.generate_json(repo_deduped)
         reporter.generate_excel(repo_deduped)
 
@@ -152,7 +153,7 @@ def main():
         global_dedup = Deduplicator()
         global_dedup.load(all_findings)
         global_deduped = global_dedup.deduplicate()
-        global_reporter = Reporter(args.out)
+        global_reporter = Reporter(args.out, repo_name="global")
         global_reporter.generate_json(global_deduped)
         global_reporter.generate_excel(global_deduped)
     else:

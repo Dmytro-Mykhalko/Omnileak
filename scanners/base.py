@@ -30,6 +30,13 @@ class BaseScanner(abc.ABC):
         self.tool_name = "Base"
         self.cli_command = None  # Subclasses must set this (e.g., "gitleaks")
         self.scan_duration = None
+        self.repo_name = os.path.basename(repo_path.rstrip("/"))
+
+    def _prefixed(self, filename):
+        """Prepend repo_name_ to filename."""
+        if self.repo_name:
+            return f"{self.repo_name}_{filename}"
+        return filename
 
     def is_available(self):
         """Check if the CLI tool is available in PATH before attempting to run it."""
