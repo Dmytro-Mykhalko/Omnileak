@@ -22,8 +22,39 @@ def normalize_secret(value):
     return re.sub(r"\s+", "", value)
 
 
+def resolve_repo_url(repo_path):
+    """Resolve the HTTPS browse URL of the git remote (origin).
+
+    Converts SSH URLs (``git@host:org/repo.git``) to
+    ``https://host/org/repo`` so that commit links work in browsers.
+    Returns an empty string when the remote cannot be determined.
+
+    This is a standalone function so it can be called **once per repo**
+    and the result shared across all scanner instances.
+    """
+    abs_repo = os.path.abspath(repo_path)
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True,
+            cwd=abs_repo, timeout=5, check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            url = result.stdout.strip()
+            # SSH → HTTPS  (git@github.com:org/repo.git)
+            if url.startswith("git@"):
+                url = url.replace(":", "/", 1).replace("git@", "https://")
+            # Strip trailing .git
+            if url.endswith(".git"):
+                url = url[:-4]
+            return url
+    except Exception as e:
+        logger.debug(f"Could not resolve remote URL for {abs_repo}: {e}")
+    return ""
+
+
 class BaseScanner(abc.ABC):
-    def __init__(self, repo_path, output_dir, timeout=None):
+    def __init__(self, repo_path, output_dir, timeout=None, repo_url=""):
         self.repo_path = repo_path
         self.output_dir = output_dir
         self.timeout = timeout
@@ -31,34 +62,7 @@ class BaseScanner(abc.ABC):
         self.cli_command = None  # Subclasses must set this (e.g., "gitleaks")
         self.scan_duration = None
         self.repo_name = os.path.basename(repo_path.rstrip("/"))
-        self.repo_url = self._get_repo_url()
-
-    def _get_repo_url(self):
-        """Resolve the HTTPS browse URL of the git remote (origin).
-
-        Converts SSH URLs (``git@host:org/repo.git``) to
-        ``https://host/org/repo`` so that commit links work in browsers.
-        Returns an empty string when the remote cannot be determined.
-        """
-        abs_repo = os.path.abspath(self.repo_path)
-        try:
-            result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                capture_output=True, text=True,
-                cwd=abs_repo, timeout=5, check=False,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                url = result.stdout.strip()
-                # SSH → HTTPS  (git@github.com:org/repo.git)
-                if url.startswith("git@"):
-                    url = url.replace(":", "/", 1).replace("git@", "https://")
-                # Strip trailing .git
-                if url.endswith(".git"):
-                    url = url[:-4]
-                return url
-        except Exception as e:
-            logger.debug(f"Could not resolve remote URL for {abs_repo}: {e}")
-        return ""
+        self.repo_url = repo_url
 
     def _prefixed(self, filename):
         """Prepend repo_name_ to filename."""

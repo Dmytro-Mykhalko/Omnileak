@@ -7,8 +7,8 @@ logger = logging.getLogger(__name__)
 
 
 class GitleaksScanner(BaseScanner):
-    def __init__(self, repo_path, output_dir, timeout=None):
-        super().__init__(repo_path, output_dir, timeout)
+    def __init__(self, repo_path, output_dir, timeout=None, repo_url=""):
+        super().__init__(repo_path, output_dir, timeout, repo_url=repo_url)
         self.tool_name = "Gitleaks"
         self.cli_command = "gitleaks"
         self.raw_output = os.path.join(output_dir, self._prefixed("gitleaks_raw.json"))

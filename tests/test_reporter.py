@@ -34,28 +34,18 @@ SAMPLE_DATA = [
 
 class TestBuildCommitUrl:
     def test_github_style(self):
-        url = _build_commit_url(
-            "https://example.com/org/repo", "abc123", "src/app.py", 42
-        )
-        assert url == "https://example.com/org/repo/blob/abc123/src/app.py#L42"
+        url = _build_commit_url("https://example.com/org/repo", "abc123")
+        assert url == "https://example.com/org/repo/commit/abc123"
 
     def test_gitlab_style(self):
-        url = _build_commit_url(
-            "https://gitlab.example.com/org/repo", "abc123", "src/app.py", 5
-        )
-        assert url == "https://gitlab.example.com/org/repo/-/blob/abc123/src/app.py#L5"
-
-    def test_no_line_number(self):
-        url = _build_commit_url(
-            "https://example.com/org/repo", "abc123", "file.txt"
-        )
-        assert url == "https://example.com/org/repo/blob/abc123/file.txt"
+        url = _build_commit_url("https://gitlab.example.com/org/repo", "abc123")
+        assert url == "https://gitlab.example.com/org/repo/-/commit/abc123"
 
     def test_empty_repo_url(self):
-        assert _build_commit_url("", "abc123", "file.txt") == ""
+        assert _build_commit_url("", "abc123") == ""
 
     def test_empty_commit(self):
-        assert _build_commit_url("https://example.com/org/repo", "", "f.txt") == ""
+        assert _build_commit_url("https://example.com/org/repo", "") == ""
 
 
 class TestJsonReport:
@@ -103,17 +93,17 @@ class TestExcelReport:
         assert len(df) == 2
 
     def test_commit_column_replaces_commit_hash(self, tmp_path):
-        """Column should be named 'commit' with short hashes, not 'commit_hash'."""
+        """Column should be named 'commit' with full hashes, not 'commit_hash'."""
         reporter = Reporter(str(tmp_path), repo_name="myrepo")
         path = reporter.generate_excel(SAMPLE_DATA)
         df = pd.read_excel(path, sheet_name="General")
         assert "commit" in df.columns
         assert "commit_hash" not in df.columns
-        assert df.iloc[0]["commit"] == "abc1234"
-        assert df.iloc[1]["commit"] == "def5678"
+        assert df.iloc[0]["commit"] == "abc1234deadbeef"
+        assert df.iloc[1]["commit"] == "def5678beefdead"
 
     def test_commit_column_has_hyperlinks(self, tmp_path):
-        """Commit cells should contain clickable hyperlinks."""
+        """Commit cells should contain clickable hyperlinks to the commit page."""
         reporter = Reporter(str(tmp_path), repo_name="myrepo")
         path = reporter.generate_excel(SAMPLE_DATA)
         wb = load_workbook(path)
@@ -130,8 +120,8 @@ class TestExcelReport:
         # Row 2 = first data row
         cell = ws.cell(row=2, column=commit_col)
         assert cell.hyperlink is not None
-        assert "abc1234deadbeef" in cell.hyperlink.target
-        assert "config.yml" in cell.hyperlink.target
+        expected = "https://example.com/org/repo/commit/abc1234deadbeef"
+        assert cell.hyperlink.target == expected
 
     def test_commit_hyperlink_absent_without_repo_url(self, tmp_path):
         """When repo_url is empty, commit should be plain text (no link)."""
@@ -161,6 +151,21 @@ class TestExcelReport:
         cell = ws.cell(row=2, column=commit_col)
         assert cell.hyperlink is None
         assert cell.value == "aaa1111"
+
+    def test_commit_hyperlink_on_tool_tab(self, tmp_path):
+        """Per-tool sheets should also have commit hyperlinks."""
+        reporter = Reporter(str(tmp_path), repo_name="myrepo")
+        path = reporter.generate_excel(SAMPLE_DATA)
+        wb = load_workbook(path)
+        ws = wb["Gitleaks"]
+
+        commit_col = None
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=1, column=col).value == "commit":
+                commit_col = col
+                break
+        cell = ws.cell(row=2, column=commit_col)
+        assert cell.hyperlink is not None
 
     def test_found_by_is_string_in_excel(self, tmp_path):
         """found_by should be a comma-separated string, not a Python list."""

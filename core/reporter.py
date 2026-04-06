@@ -13,22 +13,18 @@ COLUMNS = [
 ]
 
 
-def _build_commit_url(repo_url, commit_hash, file_path, line_number=""):
-    """Build a browser URL pointing to a specific file at a given commit.
+def _build_commit_url(repo_url, commit_hash):
+    """Build a browser URL pointing to a specific commit.
 
-    Supports GitHub and GitLab URL patterns.  Returns an empty string
-    when there is not enough information to construct a valid link.
+    Uses ``/commit/<hash>`` which is valid on GitHub, GitLab, Gitea, etc.
+    Returns an empty string when there is not enough information.
     """
     if not repo_url or not commit_hash:
         return ""
-    # GitLab uses /-/blob/…, everything else (GitHub, Gitea, …) uses /blob/…
+    # GitLab uses /-/commit/…, everything else uses /commit/…
     if "gitlab" in repo_url.lower():
-        url = f"{repo_url}/-/blob/{commit_hash}/{file_path}"
-    else:
-        url = f"{repo_url}/blob/{commit_hash}/{file_path}"
-    if line_number:
-        url += f"#L{line_number}"
-    return url
+        return f"{repo_url}/-/commit/{commit_hash}"
+    return f"{repo_url}/commit/{commit_hash}"
 
 
 class Reporter:
@@ -62,10 +58,10 @@ class Reporter:
             row = copy.deepcopy(item)
             if isinstance(row.get("found_by"), list):
                 row["found_by"] = ", ".join(row["found_by"])
-            # Rename commit_hash → commit (display short hash)
+            # Rename commit_hash → commit (full hash)
             commit_hash = row.pop("commit_hash", "")
             row.pop("repo_url", None)
-            row["commit"] = commit_hash[:7] if commit_hash else ""
+            row["commit"] = commit_hash
             excel_data.append(row)
         return excel_data
 
@@ -77,8 +73,6 @@ class Reporter:
             url = _build_commit_url(
                 item.get("repo_url", ""),
                 item.get("commit_hash", ""),
-                item.get("file_path", ""),
-                item.get("line_number", ""),
             )
             urls.append(url)
         return urls

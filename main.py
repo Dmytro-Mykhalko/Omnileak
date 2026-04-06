@@ -10,7 +10,7 @@ _local_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
 if os.path.isdir(_local_bin):
     os.environ["PATH"] = _local_bin + os.pathsep + os.environ.get("PATH", "")
 
-from scanners import GitleaksScanner, TrufflehogScanner, DetectSecretsScanner, TitusScanner
+from scanners import GitleaksScanner, TrufflehogScanner, DetectSecretsScanner, TitusScanner, resolve_repo_url
 from core import Deduplicator, Reporter, ensure_tools
 
 logging.basicConfig(
@@ -63,11 +63,14 @@ def scan_single_repo(repo_path, output_dir, tool_names, timeout, threads):
     repo_out = os.path.join(output_dir, repo_name)
     os.makedirs(repo_out, exist_ok=True)
 
+    # Resolve the remote URL once for the whole repo
+    repo_url = resolve_repo_url(repo_path)
+
     scanners = []
     for name in tool_names:
         cls = SCANNER_REGISTRY.get(name)
         if cls:
-            scanners.append(cls(repo_path, repo_out, timeout))
+            scanners.append(cls(repo_path, repo_out, timeout, repo_url=repo_url))
         else:
             logger.warning(f"Unknown tool '{name}'. Available: {list(SCANNER_REGISTRY.keys())}")
 

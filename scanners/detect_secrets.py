@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class DetectSecretsScanner(BaseScanner):
-    def __init__(self, repo_path, output_dir, timeout=None):
-        super().__init__(repo_path, output_dir, timeout)
+    def __init__(self, repo_path, output_dir, timeout=None, repo_url=""):
+        super().__init__(repo_path, output_dir, timeout, repo_url=repo_url)
         self.tool_name = "DetectSecrets"
         self.cli_command = "detect-secrets"
         self.raw_output = os.path.join(output_dir, self._prefixed("detect_secrets_raw.json"))
