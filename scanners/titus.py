@@ -169,6 +169,7 @@ class TitusScanner(BaseScanner):
                             "secret_type": rule_name,
                             "secret_value": secret,
                             "commit_hash": "",
+                            "repo_url": self.repo_url,
                             "found_by": ["titus"],
                         })
                 continue
@@ -201,6 +202,7 @@ class TitusScanner(BaseScanner):
                     "secret_type": match_rule,
                     "secret_value": secret,
                     "commit_hash": commit_hash,
+                    "repo_url": self.repo_url,
                     "found_by": ["titus"],
                 })
 

@@ -2,7 +2,8 @@ import os
 import json
 import pytest
 import pandas as pd
-from core.reporter import Reporter
+from openpyxl import load_workbook
+from core.reporter import Reporter, _build_commit_url
 
 
 SAMPLE_DATA = [
@@ -13,7 +14,8 @@ SAMPLE_DATA = [
         "line_number": 10,
         "secret_type": "AWS_KEY",
         "secret_value": "AKIA123",
-        "commit_hash": "abc",
+        "commit_hash": "abc1234deadbeef",
+        "repo_url": "https://example.com/org/repo",
         "found_by": ["gitleaks", "trufflehog"],
     },
     {
@@ -23,10 +25,37 @@ SAMPLE_DATA = [
         "line_number": 2,
         "secret_type": "DB_PASS",
         "secret_value": "s3cr3t",
-        "commit_hash": "def",
+        "commit_hash": "def5678beefdead",
+        "repo_url": "https://example.com/org/repo",
         "found_by": ["detect-secrets"],
     },
 ]
+
+
+class TestBuildCommitUrl:
+    def test_github_style(self):
+        url = _build_commit_url(
+            "https://example.com/org/repo", "abc123", "src/app.py", 42
+        )
+        assert url == "https://example.com/org/repo/blob/abc123/src/app.py#L42"
+
+    def test_gitlab_style(self):
+        url = _build_commit_url(
+            "https://gitlab.example.com/org/repo", "abc123", "src/app.py", 5
+        )
+        assert url == "https://gitlab.example.com/org/repo/-/blob/abc123/src/app.py#L5"
+
+    def test_no_line_number(self):
+        url = _build_commit_url(
+            "https://example.com/org/repo", "abc123", "file.txt"
+        )
+        assert url == "https://example.com/org/repo/blob/abc123/file.txt"
+
+    def test_empty_repo_url(self):
+        assert _build_commit_url("", "abc123", "file.txt") == ""
+
+    def test_empty_commit(self):
+        assert _build_commit_url("https://example.com/org/repo", "", "f.txt") == ""
 
 
 class TestJsonReport:
@@ -73,6 +102,66 @@ class TestExcelReport:
         df = pd.read_excel(path, sheet_name="General")
         assert len(df) == 2
 
+    def test_commit_column_replaces_commit_hash(self, tmp_path):
+        """Column should be named 'commit' with short hashes, not 'commit_hash'."""
+        reporter = Reporter(str(tmp_path), repo_name="myrepo")
+        path = reporter.generate_excel(SAMPLE_DATA)
+        df = pd.read_excel(path, sheet_name="General")
+        assert "commit" in df.columns
+        assert "commit_hash" not in df.columns
+        assert df.iloc[0]["commit"] == "abc1234"
+        assert df.iloc[1]["commit"] == "def5678"
+
+    def test_commit_column_has_hyperlinks(self, tmp_path):
+        """Commit cells should contain clickable hyperlinks."""
+        reporter = Reporter(str(tmp_path), repo_name="myrepo")
+        path = reporter.generate_excel(SAMPLE_DATA)
+        wb = load_workbook(path)
+        ws = wb["General"]
+
+        # Find commit column
+        commit_col = None
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=1, column=col).value == "commit":
+                commit_col = col
+                break
+        assert commit_col is not None
+
+        # Row 2 = first data row
+        cell = ws.cell(row=2, column=commit_col)
+        assert cell.hyperlink is not None
+        assert "abc1234deadbeef" in cell.hyperlink.target
+        assert "config.yml" in cell.hyperlink.target
+
+    def test_commit_hyperlink_absent_without_repo_url(self, tmp_path):
+        """When repo_url is empty, commit should be plain text (no link)."""
+        data_no_url = [
+            {
+                "id": "ccc",
+                "repository": "repo",
+                "file_path": "f.py",
+                "line_number": 1,
+                "secret_type": "T",
+                "secret_value": "val",
+                "commit_hash": "aaa1111",
+                "repo_url": "",
+                "found_by": ["gitleaks"],
+            }
+        ]
+        reporter = Reporter(str(tmp_path), repo_name="myrepo")
+        path = reporter.generate_excel(data_no_url)
+        wb = load_workbook(path)
+        ws = wb["General"]
+
+        commit_col = None
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=1, column=col).value == "commit":
+                commit_col = col
+                break
+        cell = ws.cell(row=2, column=commit_col)
+        assert cell.hyperlink is None
+        assert cell.value == "aaa1111"
+
     def test_found_by_is_string_in_excel(self, tmp_path):
         """found_by should be a comma-separated string, not a Python list."""
         reporter = Reporter(str(tmp_path), repo_name="myrepo")
@@ -98,7 +187,6 @@ class TestExcelReport:
 
     def test_auto_filters_applied(self, tmp_path):
         """Each sheet should have auto-filters enabled on all columns."""
-        from openpyxl import load_workbook
         reporter = Reporter(str(tmp_path), repo_name="myrepo")
         path = reporter.generate_excel(SAMPLE_DATA)
         wb = load_workbook(path)
@@ -109,9 +197,15 @@ class TestExcelReport:
 
     def test_auto_filters_on_empty(self, tmp_path):
         """Auto-filters should be present even on an empty report."""
-        from openpyxl import load_workbook
         reporter = Reporter(str(tmp_path), repo_name="myrepo")
         path = reporter.generate_excel([])
         wb = load_workbook(path)
         ws = wb["General"]
         assert ws.auto_filter.ref == ws.dimensions
+
+    def test_repo_url_not_in_columns(self, tmp_path):
+        """repo_url is internal metadata and must not appear as an Excel column."""
+        reporter = Reporter(str(tmp_path), repo_name="myrepo")
+        path = reporter.generate_excel(SAMPLE_DATA)
+        df = pd.read_excel(path, sheet_name="General")
+        assert "repo_url" not in df.columns

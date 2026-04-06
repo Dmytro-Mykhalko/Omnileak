@@ -193,6 +193,8 @@ class Deduplicator:
                 base["line_number"] = other["line_number"]
             if not base["file_path"] and other.get("file_path"):
                 base["file_path"] = other["file_path"]
+            if not base.get("repo_url") and other.get("repo_url"):
+                base["repo_url"] = other["repo_url"]
 
         base["found_by"] = sorted(found_by)
         return base

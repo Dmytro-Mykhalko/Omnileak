@@ -31,6 +31,34 @@ class BaseScanner(abc.ABC):
         self.cli_command = None  # Subclasses must set this (e.g., "gitleaks")
         self.scan_duration = None
         self.repo_name = os.path.basename(repo_path.rstrip("/"))
+        self.repo_url = self._get_repo_url()
+
+    def _get_repo_url(self):
+        """Resolve the HTTPS browse URL of the git remote (origin).
+
+        Converts SSH URLs (``git@host:org/repo.git``) to
+        ``https://host/org/repo`` so that commit links work in browsers.
+        Returns an empty string when the remote cannot be determined.
+        """
+        abs_repo = os.path.abspath(self.repo_path)
+        try:
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                capture_output=True, text=True,
+                cwd=abs_repo, timeout=5, check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                url = result.stdout.strip()
+                # SSH → HTTPS  (git@github.com:org/repo.git)
+                if url.startswith("git@"):
+                    url = url.replace(":", "/", 1).replace("git@", "https://")
+                # Strip trailing .git
+                if url.endswith(".git"):
+                    url = url[:-4]
+                return url
+        except Exception as e:
+            logger.debug(f"Could not resolve remote URL for {abs_repo}: {e}")
+        return ""
 
     def _prefixed(self, filename):
         """Prepend repo_name_ to filename."""

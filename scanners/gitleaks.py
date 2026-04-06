@@ -60,6 +60,7 @@ class GitleaksScanner(BaseScanner):
                 "secret_type": item.get("RuleID", "Unknown"),
                 "secret_value": secret,
                 "commit_hash": item.get("Commit", ""),
+                "repo_url": self.repo_url,
                 "found_by": ["gitleaks"],
             }
             results.append(finding)

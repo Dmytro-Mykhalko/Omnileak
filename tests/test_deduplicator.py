@@ -14,6 +14,7 @@ class TestDeduplicator:
                 "secret_type": "AWS",
                 "secret_value": "AKIA123",
                 "commit_hash": "abc",
+                "repo_url": "",
                 "found_by": ["gitleaks"],
             },
             {
@@ -24,6 +25,7 @@ class TestDeduplicator:
                 "secret_type": "AWS_Key",
                 "secret_value": "AKIA123",
                 "commit_hash": "",
+                "repo_url": "",
                 "found_by": ["trufflehog"],
             },
         ])
@@ -44,6 +46,7 @@ class TestDeduplicator:
                 "secret_type": "AWS",
                 "secret_value": "AKIA123",
                 "commit_hash": "abc",
+                "repo_url": "",
                 "found_by": ["gitleaks"],
             },
             {
@@ -54,6 +57,7 @@ class TestDeduplicator:
                 "secret_type": "DB_PASS",
                 "secret_value": "COMPLETELY_DIFFERENT",
                 "commit_hash": "def",
+                "repo_url": "",
                 "found_by": ["detect-secrets"],
             },
         ])
@@ -72,6 +76,7 @@ class TestDeduplicator:
                 "secret_type": "T",
                 "secret_value": "s",
                 "commit_hash": "",
+                "repo_url": "",
                 "found_by": ["detect-secrets"],
             },
             {
@@ -82,6 +87,7 @@ class TestDeduplicator:
                 "secret_type": "T",
                 "secret_value": "s",
                 "commit_hash": "deadbeef",
+                "repo_url": "https://example.com/org/repo",
                 "found_by": ["gitleaks"],
             },
         ])
@@ -89,6 +95,7 @@ class TestDeduplicator:
         assert len(result) == 1
         assert result[0]["commit_hash"] == "deadbeef"
         assert result[0]["line_number"] == "42"
+        assert result[0]["repo_url"] == "https://example.com/org/repo"
 
     def test_empty_input(self):
         dedup = Deduplicator()
@@ -97,9 +104,9 @@ class TestDeduplicator:
     def test_found_by_sorted(self):
         dedup = Deduplicator()
         dedup.load([
-            {"id": "x", "repository": "r", "file_path": "f", "line_number": "", "secret_type": "T", "secret_value": "s", "commit_hash": "", "found_by": ["trufflehog"]},
-            {"id": "x", "repository": "r", "file_path": "f", "line_number": "", "secret_type": "T", "secret_value": "s", "commit_hash": "", "found_by": ["gitleaks"]},
-            {"id": "x", "repository": "r", "file_path": "f", "line_number": "", "secret_type": "T", "secret_value": "s", "commit_hash": "", "found_by": ["detect-secrets"]},
+            {"id": "x", "repository": "r", "file_path": "f", "line_number": "", "secret_type": "T", "secret_value": "s", "commit_hash": "", "repo_url": "", "found_by": ["trufflehog"]},
+            {"id": "x", "repository": "r", "file_path": "f", "line_number": "", "secret_type": "T", "secret_value": "s", "commit_hash": "", "repo_url": "", "found_by": ["gitleaks"]},
+            {"id": "x", "repository": "r", "file_path": "f", "line_number": "", "secret_type": "T", "secret_value": "s", "commit_hash": "", "repo_url": "", "found_by": ["detect-secrets"]},
         ])
         result = dedup.deduplicate()
         assert result[0]["found_by"] == ["detect-secrets", "gitleaks", "trufflehog"]
@@ -117,6 +124,7 @@ class TestDeduplicator:
                 "secret_type": "private-key",
                 "secret_value": "-----BEGIN KEY-----\n    MHcCAQ",
                 "commit_hash": "aaa",
+                "repo_url": "",
                 "found_by": ["gitleaks"],
             },
             {
@@ -127,6 +135,7 @@ class TestDeduplicator:
                 "secret_type": "PrivateKey",
                 "secret_value": "-----BEGIN KEY-----\nMHcCAQ",
                 "commit_hash": "aaa",
+                "repo_url": "",
                 "found_by": ["trufflehog"],
             },
         ])
@@ -148,6 +157,7 @@ class TestDeduplicator:
                 "secret_type": "aws-key",
                 "secret_value": "AKIAEXAMPLE",
                 "commit_hash": "abc",
+                "repo_url": "",
                 "found_by": ["gitleaks"],
             },
             {
@@ -158,6 +168,7 @@ class TestDeduplicator:
                 "secret_type": "AWS",
                 "secret_value": "AKIAEXAMPLE",
                 "commit_hash": "",
+                "repo_url": "",
                 "found_by": ["titus"],
             },
         ])
@@ -171,7 +182,7 @@ class TestDeduplicator:
 
 def _make_finding(secret_value, found_by, fid="x", repo="repo",
                   file_path=".env", line_number="10", commit_hash="abc",
-                  secret_type="generic"):
+                  secret_type="generic", repo_url=""):
     """Helper to build a finding dict for tests."""
     return {
         "id": fid,
@@ -181,6 +192,7 @@ def _make_finding(secret_value, found_by, fid="x", repo="repo",
         "secret_type": secret_type,
         "secret_value": secret_value,
         "commit_hash": commit_hash,
+        "repo_url": repo_url,
         "found_by": found_by if isinstance(found_by, list) else [found_by],
     }
 

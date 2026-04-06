@@ -51,6 +51,7 @@ class TrufflehogScanner(BaseScanner):
                         "secret_type": item.get("DetectorName", "Unknown"),
                         "secret_value": secret,
                         "commit_hash": commit_hash,
+                        "repo_url": self.repo_url,
                         "found_by": ["trufflehog"],
                     }
                     results.append(finding)

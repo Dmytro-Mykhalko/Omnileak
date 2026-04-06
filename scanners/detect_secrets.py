@@ -121,6 +121,7 @@ class DetectSecretsScanner(BaseScanner):
                     "secret_type": item.get("type", "Unknown"),
                     "secret_value": secret_value,
                     "commit_hash": commit_hash,
+                    "repo_url": self.repo_url,
                     "found_by": ["detect-secrets"],
                 }
                 results.append(finding)
