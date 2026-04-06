@@ -182,6 +182,19 @@ Each entry in `aggregated_secrets.json`:
 
 ## Excel Output Format
 
+The **commit** column in the Excel report is a clickable hyperlink that opens the affected file at the exact commit where the secret was found (e.g. `https://github.com/org/repo/blob/<commit>/<file>#L<line>`).
+
+> **💡 If a commit link returns 404** — the file was most likely deleted or renamed after that commit. To view the commit itself, replace `/blob/` with `/commit/` in the URL and remove the file path and line anchor.
+>
+> For example, change:
+> ```
+> https://github.com/org/repo/blob/cb37fba.../docs/some-file.md#L5
+> ```
+> to:
+> ```
+> https://github.com/org/repo/commit/cb37fba...
+> ```
+
 `secrets_report.xlsx` has these tabs:
 
 | Tab | Contents |

@@ -13,18 +13,28 @@ COLUMNS = [
 ]
 
 
-def _build_commit_url(repo_url, commit_hash):
-    """Build a browser URL pointing to a specific commit.
+def _build_commit_url(repo_url, commit_hash, file_path, line_number=""):
+    """Build a browser URL pointing to a specific file at a given commit.
 
-    Uses ``/commit/<hash>`` which is valid on GitHub, GitLab, Gitea, etc.
-    Returns an empty string when there is not enough information.
+    Supports GitHub and GitLab URL patterns.  Returns an empty string
+    when there is not enough information to construct a valid link.
+
+    .. note::
+
+       If the file was deleted or renamed after this commit the link may
+       404.  See the README for a quick workaround (replace ``/blob/``
+       with ``/commit/`` and drop the file path).
     """
     if not repo_url or not commit_hash:
         return ""
-    # GitLab uses /-/commit/…, everything else uses /commit/…
+    # GitLab uses /-/blob/…, everything else (GitHub, Gitea, …) uses /blob/…
     if "gitlab" in repo_url.lower():
-        return f"{repo_url}/-/commit/{commit_hash}"
-    return f"{repo_url}/commit/{commit_hash}"
+        url = f"{repo_url}/-/blob/{commit_hash}/{file_path}"
+    else:
+        url = f"{repo_url}/blob/{commit_hash}/{file_path}"
+    if line_number:
+        url += f"#L{line_number}"
+    return url
 
 
 class Reporter:
@@ -73,6 +83,8 @@ class Reporter:
             url = _build_commit_url(
                 item.get("repo_url", ""),
                 item.get("commit_hash", ""),
+                item.get("file_path", ""),
+                item.get("line_number", ""),
             )
             urls.append(url)
         return urls

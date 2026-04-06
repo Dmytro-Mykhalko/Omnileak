@@ -34,18 +34,28 @@ SAMPLE_DATA = [
 
 class TestBuildCommitUrl:
     def test_github_style(self):
-        url = _build_commit_url("https://example.com/org/repo", "abc123")
-        assert url == "https://example.com/org/repo/commit/abc123"
+        url = _build_commit_url(
+            "https://example.com/org/repo", "abc123", "src/app.py", 42
+        )
+        assert url == "https://example.com/org/repo/blob/abc123/src/app.py#L42"
 
     def test_gitlab_style(self):
-        url = _build_commit_url("https://gitlab.example.com/org/repo", "abc123")
-        assert url == "https://gitlab.example.com/org/repo/-/commit/abc123"
+        url = _build_commit_url(
+            "https://gitlab.example.com/org/repo", "abc123", "src/app.py", 5
+        )
+        assert url == "https://gitlab.example.com/org/repo/-/blob/abc123/src/app.py#L5"
+
+    def test_no_line_number(self):
+        url = _build_commit_url(
+            "https://example.com/org/repo", "abc123", "file.txt"
+        )
+        assert url == "https://example.com/org/repo/blob/abc123/file.txt"
 
     def test_empty_repo_url(self):
-        assert _build_commit_url("", "abc123") == ""
+        assert _build_commit_url("", "abc123", "file.txt") == ""
 
     def test_empty_commit(self):
-        assert _build_commit_url("https://example.com/org/repo", "") == ""
+        assert _build_commit_url("https://example.com/org/repo", "", "f.txt") == ""
 
 
 class TestJsonReport:
@@ -120,7 +130,7 @@ class TestExcelReport:
         # Row 2 = first data row
         cell = ws.cell(row=2, column=commit_col)
         assert cell.hyperlink is not None
-        expected = "https://example.com/org/repo/commit/abc1234deadbeef"
+        expected = "https://example.com/org/repo/blob/abc1234deadbeef/config.yml#L10"
         assert cell.hyperlink.target == expected
 
     def test_commit_hyperlink_absent_without_repo_url(self, tmp_path):
