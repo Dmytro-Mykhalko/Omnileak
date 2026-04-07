@@ -17,12 +17,13 @@ A Python-based orchestrator that scans Git repositories for hardcoded secrets us
 
 - **Zero setup** — all 4 CLI tools are **auto-installed** on first run if missing (downloaded to a local `./bin/` folder, no sudo needed)
 - **Multi-repo support** — point at one repo or a directory of 100 repos; each gets its own report
-- **Parallel execution** — scanners run concurrently via threads
+- **Parallel execution** — repos scan concurrently (`--threads`), and all 4 tools run in parallel within each repo
 - **Smart deduplication** — same secret found by 3 tools = 1 row with `found_by: gitleaks, titus, trufflehog`
 - **Whitespace-normalized matching** — different formatting of the same key across tools won't create duplicates
 - **Selective tool execution** — run all tools or pick specific ones with `--tools`
 - **Fault tolerant** — if a tool crashes or is missing, the rest continue normally
-- **Complete output** — every row in Excel/JSON has `file_path`, `secret_value`, `line_number`, `commit_hash`, `secret_type`, `found_by`
+- **Clickable commit links** — the commit column in Excel links directly to the file at that commit on GitHub / GitLab
+- **Complete output** — every row in Excel/JSON has `file_path`, `secret_value`, `line_number`, `commit`, `secret_type`, `found_by`
 
 ---
 
@@ -86,8 +87,21 @@ python main.py --repo <PATH> --out <PATH> [--tools ...] [--threads N] [--timeout
 | `--repo` | **Yes** | — | Path to a single Git repo, **or** a directory containing multiple cloned repos. |
 | `--out` | **Yes** | — | Output directory. Created automatically if it doesn't exist. |
 | `--tools` | No | all 4 | Space-separated list. Choices: `gitleaks`, `trufflehog`, `detect-secrets`, `titus` |
-| `--threads` | No | `4` | Number of parallel scanner threads. |
+| `--threads` | No | `4` | Number of repos to scan in parallel. Each repo runs all 4 tools concurrently regardless of this setting. See [Threading model](#threading-model) below. |
 | `--timeout` | No | no limit | Max seconds per tool per repo. Omit for unrestricted deep history scans. |
+
+### Threading model
+
+`--threads` controls **repo-level parallelism** — how many repositories are scanned at the same time. Within each repo, all selected tools always run concurrently (one thread per tool).
+
+| `--threads` | Repos in parallel | Tools per repo | Max concurrent processes |
+|:-----------:|:-----------------:|:--------------:|:------------------------:|
+| 1 | 1 | 4 | 4 |
+| 2 | 2 | 4 | 8 |
+| **4** (default) | 4 | 4 | 16 |
+| 8 | 8 | 4 | 32 |
+
+> ⚠️ **Recommendation:** keep `--threads` at **4 or below** for most machines. Each repo spawns 4 tool processes that scan full git history, which is CPU- and I/O-intensive. Going above 4 can saturate disk I/O and slow things down rather than speed them up.
 
 ### Examples
 
@@ -95,7 +109,7 @@ python main.py --repo <PATH> --out <PATH> [--tools ...] [--threads N] [--timeout
 # Scan a single repo with all tools
 python main.py --repo ~/projects/my-app --out ./results
 
-# Scan a directory containing 50 repos
+# Scan a directory containing 50 repos (4 repos at a time by default)
 python main.py --repo ~/all-repos --out ./results
 
 # Only run Gitleaks and Titus
@@ -104,6 +118,64 @@ python main.py --repo ~/projects/my-app --out ./results --tools gitleaks titus
 # Set a 30-minute timeout per tool
 python main.py --repo ~/projects/huge-monorepo --out ./results --timeout 1800
 ```
+
+---
+
+## 💡 Tips for Effective Scanning
+
+### 1. Organize your workspace
+
+Create a dedicated project folder for each engagement. Clone all target repos into a `src/` subdirectory, then point Omnileak's `--out` to the project root. This keeps source code and results neatly separated:
+
+```
+my-audit/
+├── src/                        ← clone repos here
+│   ├── backend-api/
+│   ├── frontend-app/
+│   └── infra-config/
+└── results/                    ← Omnileak writes reports here
+    ├── global_aggregated_secrets.json
+    ├── global_secrets_report.xlsx
+    ├── backend-api/
+    ├── frontend-app/
+    └── infra-config/
+```
+
+```bash
+mkdir -p my-audit/src && cd my-audit/src
+git clone <repo-1-url>
+git clone <repo-2-url>
+git clone <repo-3-url>
+cd ..
+python /path/to/Omnileak/main.py --repo ./src --out ./results
+```
+
+### 2. Reviewing the Excel report
+
+Once the scan completes, open `secrets_report.xlsx` and try this workflow:
+
+1. **Sort by `file_path` A→Z** — groups findings by file, making it much easier to spot duplicates and understand context.
+2. **Add your own columns** next to the report data for tracking:
+   - **Status** — e.g. `Vulnerable`, `False Positive`, `Rotated`, `To Investigate`
+   - **Severity** — e.g. `Critical`, `High`, `Medium`, `Low`
+   - **Comments** — your notes on each finding
+3. **Use auto-filters** (already enabled on every column) to quickly slice the data — filter by `secret_type`, `repository`, `found_by`, or your custom Status column.
+4. **Check the per-tool tabs** (Gitleaks, Trufflehog, etc.) if you want to see what each tool found individually before deduplication.
+
+### 3. Handling 404 commit links
+
+The **commit** column is a clickable link to the affected file at the exact commit (e.g. `https://github.com/org/repo/blob/<commit>/<file>#L<line>`).
+
+> If a link returns **404** — the file was most likely deleted or renamed after that commit. To view the commit itself, replace `/blob/` with `/commit/` in the URL and remove the file path and line anchor.
+>
+> For example, change:
+> ```
+> https://github.com/org/repo/blob/cb37fba.../docs/some-file.md#L5
+> ```
+> to:
+> ```
+> https://github.com/org/repo/commit/cb37fba...
+> ```
 
 ---
 
@@ -127,8 +199,8 @@ results/
 
 ```
 results/
-├── aggregated_secrets.json         ← ✅ global: all repos combined
-├── secrets_report.xlsx             ← ✅ global: Excel across all repos
+├── global_aggregated_secrets.json  ← ✅ global: all repos combined
+├── global_secrets_report.xlsx      ← ✅ global: Excel across all repos
 ├── repo-alpha/
 │   ├── gitleaks_raw.json
 │   ├── trufflehog_raw.json
@@ -158,6 +230,7 @@ Each entry in `aggregated_secrets.json`:
     "secret_type": "aws-access-token",
     "secret_value": "AKIAIOSFODNN7EXAMPLE",
     "commit_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "repo_url": "https://github.com/org/my-app",
     "found_by": ["gitleaks", "titus", "trufflehog"]
 }
 ```
@@ -171,29 +244,18 @@ Each entry in `aggregated_secrets.json`:
 | `secret_type` | Category from the tool (e.g., `aws-access-token`, `Generic Password`, `np.pem.1`). |
 | `secret_value` | The actual secret string extracted from the file. |
 | `commit_hash` | Git commit that introduced or last touched the line. Resolved via tool-native data or `git blame`. |
+| `repo_url` | HTTPS URL of the git remote (resolved from `origin`). Used to build clickable commit links. |
 | `found_by` | Sorted list of tools that detected this secret. |
 
 ### Deduplication logic
 
 1. **Pass 1** — group by `id` (repo + file + whitespace-normalized secret). Merge `found_by`, fill empty fields.
 2. **Pass 2** — group by repo + secret only (ignoring file path). Catches the same credential reported with different paths by different tools.
+3. **Pass 3** — proximity dedup: findings on the same file + line + commit where one secret value contains the other are merged (handles tools extracting different amounts of context).
 
 ---
 
 ## Excel Output Format
-
-The **commit** column in the Excel report is a clickable hyperlink that opens the affected file at the exact commit where the secret was found (e.g. `https://github.com/org/repo/blob/<commit>/<file>#L<line>`).
-
-> **💡 If a commit link returns 404** — the file was most likely deleted or renamed after that commit. To view the commit itself, replace `/blob/` with `/commit/` in the URL and remove the file path and line anchor.
->
-> For example, change:
-> ```
-> https://github.com/org/repo/blob/cb37fba.../docs/some-file.md#L5
-> ```
-> to:
-> ```
-> https://github.com/org/repo/commit/cb37fba...
-> ```
 
 `secrets_report.xlsx` has these tabs:
 
@@ -205,8 +267,11 @@ The **commit** column in the Excel report is a clickable hyperlink that opens th
 | **Detect-secrets** | Findings where `found_by` includes `detect-secrets`. |
 | **Titus** | Findings where `found_by` includes `titus`. |
 
+Excel columns: `id`, `repository`, `file_path`, `line_number`, `secret_type`, `secret_value`, `commit`, `found_by`
+
+- The **commit** column is a clickable hyperlink pointing to the file at that commit on GitHub/GitLab.
 - `found_by` is rendered as a comma-separated string (e.g., `gitleaks, titus`) for clean Google Sheets import.
-- Every row has all fields filled — you can filter, sort, and pivot freely.
+- Auto-filters are enabled on every column in every sheet.
 
 ---
 
@@ -226,7 +291,7 @@ Tests use mock data and mocked subprocesses — **no CLI tools need to be instal
 | `tests/test_parsers.py` | All 4 tool parsers: valid data, empty, corrupt, edge cases |
 | `tests/test_deduplicator.py` | Merging, whitespace normalization, cross-tool path dedup |
 | `tests/test_orchestrator.py` | Pre-flight checks, subprocess errors, timeout handling |
-| `tests/test_reporter.py` | JSON + Excel generation, tab structure, `found_by` formatting |
+| `tests/test_reporter.py` | JSON + Excel generation, tab structure, `found_by` formatting, commit hyperlinks |
 
 ---
 
@@ -251,7 +316,7 @@ Omnileak/
 ├── core/
 │   ├── __init__.py
 │   ├── installer.py            ← Auto-downloads missing CLI tools
-│   ├── deduplicator.py         ← 2-pass dedup engine
+│   ├── deduplicator.py         ← 3-pass dedup engine
 │   └── reporter.py             ← JSON + Excel report generator
 └── tests/
     ├── __init__.py
@@ -270,8 +335,8 @@ Omnileak/
    from .base import BaseScanner
 
    class MyToolScanner(BaseScanner):
-       def __init__(self, repo_path, output_dir, timeout=None):
-           super().__init__(repo_path, output_dir, timeout)
+       def __init__(self, repo_path, output_dir, timeout=None, repo_url=""):
+           super().__init__(repo_path, output_dir, timeout, repo_url=repo_url)
            self.tool_name = "MyTool"
            self.cli_command = "mytool"
            self.raw_output = os.path.join(output_dir, "mytool_raw.json")
@@ -312,6 +377,9 @@ Yes — detect-secrets and Titus can scan plain directories. The tool will log a
 
 **Q: Where are the downloaded binaries stored?**
 In `./bin/` inside the project directory. This folder is in `.gitignore` and won't be committed. Delete it to force a fresh download.
+
+**Q: My scan is taking too long — what can I do?**
+Try reducing the number of tools (`--tools gitleaks trufflehog`), setting a `--timeout`, or keeping `--threads` at 4 or below. Titus and Trufflehog scanning full git history on large repos can take several minutes each.
 
 ---
 
