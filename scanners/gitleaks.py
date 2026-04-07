@@ -7,8 +7,10 @@ logger = logging.getLogger(__name__)
 
 
 class GitleaksScanner(BaseScanner):
-    def __init__(self, repo_path, output_dir, timeout=None, repo_url=""):
-        super().__init__(repo_path, output_dir, timeout, repo_url=repo_url)
+    def __init__(self, repo_path, output_dir, timeout=None, repo_url="",
+                 commit_from="", commit_to=""):
+        super().__init__(repo_path, output_dir, timeout, repo_url=repo_url,
+                         commit_from=commit_from, commit_to=commit_to)
         self.tool_name = "Gitleaks"
         self.cli_command = "gitleaks"
         self.raw_output = os.path.join(output_dir, self._prefixed("gitleaks_raw.json"))
@@ -20,6 +22,8 @@ class GitleaksScanner(BaseScanner):
             "--report-path", self.raw_output,
             "--report-format", "json",
         ]
+        if self.has_commit_range:
+            cmd.extend(["--log-opts", self._git_log_range()])
         res = self.run_command(cmd)
         if res is None:
             return False

@@ -7,8 +7,10 @@ logger = logging.getLogger(__name__)
 
 
 class TrufflehogScanner(BaseScanner):
-    def __init__(self, repo_path, output_dir, timeout=None, repo_url=""):
-        super().__init__(repo_path, output_dir, timeout, repo_url=repo_url)
+    def __init__(self, repo_path, output_dir, timeout=None, repo_url="",
+                 commit_from="", commit_to=""):
+        super().__init__(repo_path, output_dir, timeout, repo_url=repo_url,
+                         commit_from=commit_from, commit_to=commit_to)
         self.tool_name = "Trufflehog"
         self.cli_command = "trufflehog"
         self.raw_output = os.path.join(output_dir, self._prefixed("trufflehog_raw.json"))
@@ -19,6 +21,8 @@ class TrufflehogScanner(BaseScanner):
             f"file://{self.repo_path}",
             "--json",
         ]
+        if self.commit_from:
+            cmd.extend(["--since-commit", self.commit_from])
         res = self.run_command_to_file(cmd, self.raw_output)
         return res is not None
 

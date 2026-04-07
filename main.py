@@ -57,7 +57,8 @@ def discover_repos(path):
     return repos
 
 
-def scan_single_repo(repo_path, output_dir, tool_names, timeout, threads):
+def scan_single_repo(repo_path, output_dir, tool_names, timeout, threads,
+                     commit_from="", commit_to=""):
     """Run selected scanners against a single repository and return all findings."""
     repo_name = os.path.basename(repo_path.rstrip("/"))
     repo_out = os.path.join(output_dir, repo_name)
@@ -70,7 +71,11 @@ def scan_single_repo(repo_path, output_dir, tool_names, timeout, threads):
     for name in tool_names:
         cls = SCANNER_REGISTRY.get(name)
         if cls:
-            scanners.append(cls(repo_path, repo_out, timeout, repo_url=repo_url))
+            scanners.append(cls(
+                repo_path, repo_out, timeout,
+                repo_url=repo_url,
+                commit_from=commit_from, commit_to=commit_to,
+            ))
         else:
             logger.warning(f"Unknown tool '{name}'. Available: {list(SCANNER_REGISTRY.keys())}")
 
@@ -118,6 +123,16 @@ def main():
         "--tools", nargs="+", default=list(SCANNER_REGISTRY.keys()),
         help=f"Tools to run (default: all). Choices: {list(SCANNER_REGISTRY.keys())}",
     )
+    parser.add_argument(
+        "--commit-from", default="",
+        help="Start of commit range (exclusive). Scan commits AFTER this hash. "
+             "If omitted, scan from the very first commit.",
+    )
+    parser.add_argument(
+        "--commit-to", default="",
+        help="End of commit range (inclusive). Scan commits up to and including this hash. "
+             "If omitted, scan up to HEAD.",
+    )
     args = parser.parse_args()
 
     # Validate paths
@@ -133,12 +148,20 @@ def main():
     repos = discover_repos(args.repo)
     logger.info(f"Discovered {len(repos)} repository(ies) to scan.")
 
+    if args.commit_from or args.commit_to:
+        fr = args.commit_from or "(beginning)"
+        to = args.commit_to or "HEAD"
+        logger.info(f"Commit range: {fr} .. {to}")
+
     global_start = time.time()
     all_findings = []
 
     for repo in repos:
         logger.info(f"--- Scanning repository: {repo} ---")
-        findings, repo_out = scan_single_repo(repo, args.out, args.tools, args.timeout, args.threads)
+        findings, repo_out = scan_single_repo(
+            repo, args.out, args.tools, args.timeout, args.threads,
+            commit_from=args.commit_from, commit_to=args.commit_to,
+        )
         all_findings.extend(findings)
 
         # Per-repo reports

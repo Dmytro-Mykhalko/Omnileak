@@ -88,6 +88,8 @@ python main.py --repo <PATH> --out <PATH> [--tools ...] [--threads N] [--timeout
 | `--tools` | No | all 4 | Space-separated list. Choices: `gitleaks`, `trufflehog`, `detect-secrets`, `titus` |
 | `--threads` | No | `4` | Number of parallel scanner threads. |
 | `--timeout` | No | no limit | Max seconds per tool per repo. Omit for unrestricted deep history scans. |
+| `--commit-from` | No | oldest commit | Start of commit range (**exclusive**). Only scan commits *after* this hash. |
+| `--commit-to` | No | `HEAD` | End of commit range (**inclusive**). Only scan commits up to and including this hash. |
 
 ### Examples
 
@@ -103,7 +105,34 @@ python main.py --repo ~/projects/my-app --out ./results --tools gitleaks titus
 
 # Set a 30-minute timeout per tool
 python main.py --repo ~/projects/huge-monorepo --out ./results --timeout 1800
+
+# Scan only commits between two hashes (e.g. last audited commit → HEAD)
+python main.py --repo ~/projects/my-app --out ./results --commit-from abc1234
+
+# Scan a specific range
+python main.py --repo ~/projects/my-app --out ./results --commit-from abc1234 --commit-to def5678
 ```
+
+---
+
+## Commit Range Scanning
+
+Use `--commit-from` and/or `--commit-to` to scan only a slice of git history — useful for incremental scans after a previous audit.
+
+- `--commit-from` is **exclusive** (commits *after* this hash)
+- `--commit-to` is **inclusive** (commits *up to and including* this hash)
+- Omit either to leave that side unbounded
+
+**How it works per tool:**
+
+| Tool | Native range support | Fallback |
+|------|---------------------|----------|
+| Gitleaks | ✅ `--log-opts="FROM..TO"` | — |
+| Trufflehog | ✅ `--since-commit` (start only) | Post-filter for end commit |
+| Titus | ❌ | Post-filter via `git rev-list` |
+| Detect Secrets | ❌ (scans current files) | Post-filter via `git blame` commit hashes |
+
+All tools additionally go through a post-filter step that checks each finding's commit hash against `git rev-list` to ensure it falls within the requested range.
 
 ---
 

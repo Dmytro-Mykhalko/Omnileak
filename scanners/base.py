@@ -54,7 +54,8 @@ def resolve_repo_url(repo_path):
 
 
 class BaseScanner(abc.ABC):
-    def __init__(self, repo_path, output_dir, timeout=None, repo_url=""):
+    def __init__(self, repo_path, output_dir, timeout=None, repo_url="",
+                 commit_from="", commit_to=""):
         self.repo_path = repo_path
         self.output_dir = output_dir
         self.timeout = timeout
@@ -63,6 +64,9 @@ class BaseScanner(abc.ABC):
         self.scan_duration = None
         self.repo_name = os.path.basename(repo_path.rstrip("/"))
         self.repo_url = repo_url
+        self.commit_from = commit_from
+        self.commit_to = commit_to
+        self._commits_in_range = None  # lazy-loaded by _get_commits_in_range()
 
     def _prefixed(self, filename):
         """Prepend repo_name_ to filename."""
@@ -141,8 +145,87 @@ class BaseScanner(abc.ABC):
             logger.error(f"[{self.tool_name}] Error executing command: {e}")
             return None
 
+    # ------------------------------------------------------------------
+    # Commit-range helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def has_commit_range(self):
+        """True when the user requested a commit-range scan."""
+        return bool(self.commit_from or self.commit_to)
+
+    def _git_log_range(self):
+        """Return the ``<from>..<to>`` range string for ``git log`` / ``git rev-list``.
+
+        * Both set   → ``FROM..TO``
+        * Only from  → ``FROM..HEAD``
+        * Only to    → ``TO``  (all history up to *to*, inclusive)
+        """
+        if self.commit_from and self.commit_to:
+            return f"{self.commit_from}..{self.commit_to}"
+        if self.commit_from:
+            return f"{self.commit_from}..HEAD"
+        # only commit_to
+        return self.commit_to
+
+    def _get_commits_in_range(self):
+        """Return a *set* of full commit hashes within the requested range.
+
+        The result is cached so repeated calls are free.
+        """
+        if self._commits_in_range is not None:
+            return self._commits_in_range
+
+        if not self.has_commit_range:
+            self._commits_in_range = set()
+            return self._commits_in_range
+
+        rev_range = self._git_log_range()
+        abs_repo = os.path.abspath(self.repo_path)
+        try:
+            result = subprocess.run(
+                ["git", "rev-list", rev_range],
+                capture_output=True, text=True,
+                cwd=abs_repo, timeout=30, check=False,
+            )
+            if result.returncode == 0:
+                self._commits_in_range = set(result.stdout.strip().splitlines())
+            else:
+                logger.warning(
+                    f"[{self.tool_name}] git rev-list failed for range '{rev_range}': "
+                    f"{result.stderr.strip()}"
+                )
+                self._commits_in_range = set()
+        except Exception as e:
+            logger.warning(f"[{self.tool_name}] Could not resolve commit range: {e}")
+            self._commits_in_range = set()
+
+        logger.info(
+            f"[{self.tool_name}] Commit range '{rev_range}' contains "
+            f"{len(self._commits_in_range)} commit(s)."
+        )
+        return self._commits_in_range
+
+    def _filter_by_commit_range(self, findings):
+        """Drop findings whose commit_hash is outside the requested range."""
+        allowed = self._get_commits_in_range()
+        if not allowed:
+            return findings  # nothing to filter against
+
+        before = len(findings)
+        filtered = [f for f in findings if f.get("commit_hash") in allowed]
+        dropped = before - len(filtered)
+        if dropped:
+            logger.info(
+                f"[{self.tool_name}] Commit-range filter: kept {len(filtered)}, "
+                f"dropped {dropped} outside range."
+            )
+        return filtered
+
+    # ------------------------------------------------------------------
+
     def execute(self):
-        """Full lifecycle: availability check -> scan -> parse. Returns list of findings."""
+        """Full lifecycle: availability check -> scan -> parse -> filter. Returns list of findings."""
         if not self.is_available():
             return []
 
@@ -155,7 +238,12 @@ class BaseScanner(abc.ABC):
             return []
 
         logger.info(f"[{self.tool_name}] Scan completed in {self.scan_duration}s. Parsing results...")
-        return self.parse_results()
+        findings = self.parse_results()
+
+        if self.has_commit_range:
+            findings = self._filter_by_commit_range(findings)
+
+        return findings
 
     @abc.abstractmethod
     def run_scan(self):
