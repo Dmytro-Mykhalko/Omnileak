@@ -18,6 +18,7 @@ class TrufflehogScanner(BaseScanner):
             "trufflehog", "git",
             f"file://{self.repo_path}",
             "--json",
+            "--no-update",
         ]
         res = self.run_command_to_file(cmd, self.raw_output)
         return res is not None

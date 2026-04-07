@@ -3,7 +3,7 @@ import sys
 import argparse
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Automatically add the local ./bin directory to the PATH if it exists
 _local_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
@@ -57,8 +57,11 @@ def discover_repos(path):
     return repos
 
 
-def scan_single_repo(repo_path, output_dir, tool_names, timeout, threads):
-    """Run selected scanners against a single repository and return all findings."""
+def scan_single_repo(repo_path, output_dir, tool_names, timeout):
+    """Run selected scanners against a single repository and return all findings.
+
+    Tools within the repo always run concurrently (one thread per tool).
+    """
     repo_name = os.path.basename(repo_path.rstrip("/"))
     repo_out = os.path.join(output_dir, repo_name)
     os.makedirs(repo_out, exist_ok=True)
@@ -75,12 +78,32 @@ def scan_single_repo(repo_path, output_dir, tool_names, timeout, threads):
             logger.warning(f"Unknown tool '{name}'. Available: {list(SCANNER_REGISTRY.keys())}")
 
     all_findings = []
-    with ThreadPoolExecutor(max_workers=min(threads, len(scanners) or 1)) as executor:
+    with ThreadPoolExecutor(max_workers=len(scanners) or 1) as executor:
         results = executor.map(run_scanner, scanners)
         for res in results:
             all_findings.extend(res)
 
     return all_findings, repo_out
+
+
+def process_repo(repo_path, output_dir, tool_names, timeout):
+    """Scan a single repo, deduplicate, generate per-repo reports.
+
+    Designed to be called from a thread pool for repo-level parallelism.
+    Returns the raw (pre-dedup) findings for global aggregation.
+    """
+    logger.info(f"--- Scanning repository: {repo_path} ---")
+    findings, repo_out = scan_single_repo(repo_path, output_dir, tool_names, timeout)
+
+    repo_name = os.path.basename(repo_path.rstrip("/"))
+    dedup = Deduplicator()
+    dedup.load(findings)
+    repo_deduped = dedup.deduplicate()
+    reporter = Reporter(repo_out, repo_name=repo_name)
+    reporter.generate_json(repo_deduped)
+    reporter.generate_excel(repo_deduped)
+
+    return findings
 
 
 def print_summary(findings, duration):
@@ -109,7 +132,11 @@ def main():
         help="Path to a single repository OR a directory containing multiple repositories.",
     )
     parser.add_argument("--out", required=True, help="Output directory for reports.")
-    parser.add_argument("--threads", type=int, default=4, help="Parallel threads (default: 4).")
+    parser.add_argument(
+        "--threads", type=int, default=4,
+        help="Parallel threads for scanning repositories concurrently (default: 4). "
+             "Tools within each repo always run in parallel regardless of this setting.",
+    )
     parser.add_argument(
         "--timeout", type=int, default=None,
         help="Timeout per tool in seconds (default: no limit).",
@@ -136,19 +163,19 @@ def main():
     global_start = time.time()
     all_findings = []
 
-    for repo in repos:
-        logger.info(f"--- Scanning repository: {repo} ---")
-        findings, repo_out = scan_single_repo(repo, args.out, args.tools, args.timeout, args.threads)
-        all_findings.extend(findings)
-
-        # Per-repo reports
-        repo_name = os.path.basename(repo.rstrip("/"))
-        dedup = Deduplicator()
-        dedup.load(findings)
-        repo_deduped = dedup.deduplicate()
-        reporter = Reporter(repo_out, repo_name=repo_name)
-        reporter.generate_json(repo_deduped)
-        reporter.generate_excel(repo_deduped)
+    # Scan repos in parallel (--threads controls concurrency)
+    with ThreadPoolExecutor(max_workers=args.threads) as executor:
+        futures = {
+            executor.submit(process_repo, repo, args.out, args.tools, args.timeout): repo
+            for repo in repos
+        }
+        for future in as_completed(futures):
+            repo = futures[future]
+            try:
+                findings = future.result()
+                all_findings.extend(findings)
+            except Exception:
+                logger.exception(f"Failed to process repository: {repo}")
 
     # Global aggregated reports (across all repos)
     if len(repos) > 1:
