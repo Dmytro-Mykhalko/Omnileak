@@ -133,9 +133,10 @@ def main():
     )
     parser.add_argument("--out", required=True, help="Output directory for reports.")
     parser.add_argument(
-        "--threads", type=int, default=4,
-        help="Parallel threads for scanning repositories concurrently (default: 4). "
-             "Tools within each repo always run in parallel regardless of this setting.",
+        "--threads", type=int, default=1,
+        help="Number of repos to scan in parallel (default: 1). "
+             "Tools within each repo always run in parallel (4 tools = 4 processes) "
+             "regardless of this setting. Recommended: no more than 4.",
     )
     parser.add_argument(
         "--timeout", type=int, default=None,
