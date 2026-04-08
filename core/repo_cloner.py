@@ -65,15 +65,19 @@ def read_repo_list(filepath: str) -> list[str]:
     """Read repository URLs from a text file.
 
     Blank lines and lines starting with ``#`` are skipped.
+    Duplicates are removed and the result is sorted alphabetically.
     """
+    seen: set[str] = set()
     urls: list[str] = []
     with open(filepath, "r", encoding="utf-8") as fh:
         for line in fh:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
-            urls.append(stripped)
-    return urls
+            if stripped not in seen:
+                seen.add(stripped)
+                urls.append(stripped)
+    return sorted(urls)
 
 
 def _clone_single(url: str, dest_dir: str) -> str | None:

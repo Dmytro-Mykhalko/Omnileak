@@ -82,8 +82,8 @@ class TestReadRepoList:
         )
         result = read_repo_list(str(f))
         assert result == [
-            "https://github.com/octocat/hello-world",
             "git@github.com:octocat/Spoon-Knife.git",
+            "https://github.com/octocat/hello-world",
         ]
 
     def test_skips_blanks_and_comments(self, tmp_path):
@@ -103,6 +103,35 @@ class TestReadRepoList:
         f = tmp_path / "empty.txt"
         f.write_text("")
         assert read_repo_list(str(f)) == []
+
+    def test_deduplicates_urls(self, tmp_path):
+        f = tmp_path / "repos.txt"
+        f.write_text(
+            "https://github.com/octocat/hello-world\n"
+            "https://github.com/octocat/Spoon-Knife\n"
+            "https://github.com/octocat/hello-world\n"
+            "https://github.com/octocat/Spoon-Knife\n"
+            "https://github.com/octocat/hello-world\n"
+        )
+        result = read_repo_list(str(f))
+        assert result == [
+            "https://github.com/octocat/Spoon-Knife",
+            "https://github.com/octocat/hello-world",
+        ]
+
+    def test_sorted_output(self, tmp_path):
+        f = tmp_path / "repos.txt"
+        f.write_text(
+            "https://github.com/octocat/linguist\n"
+            "https://github.com/octocat/hello-world\n"
+            "https://github.com/octocat/Spoon-Knife\n"
+        )
+        result = read_repo_list(str(f))
+        assert result == [
+            "https://github.com/octocat/Spoon-Knife",
+            "https://github.com/octocat/hello-world",
+            "https://github.com/octocat/linguist",
+        ]
 
 
 # ------------------------------------------------------------------
