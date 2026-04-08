@@ -37,13 +37,14 @@ Tools auto-download to `./bin/` on first run. To install them upfront instead:
 ## CLI Reference
 
 ```
-python main.py --repo <PATH> --out <PATH> [--tools ...] [--threads N] [--timeout N]
+python main.py --repo <PATH> --out <PATH> [--clone-dir <PATH>] [--tools ...] [--threads N] [--timeout N]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--repo` | **required** | Path to a Git repo **or** a directory containing multiple repos. |
+| `--repo` | **required** | Path to a Git repo, a directory containing multiple repos, **or a `.txt` file listing repository URLs** (one per line). |
 | `--out` | **required** | Output directory for reports. |
+| `--clone-dir` | — | Directory to clone repositories into. **Required** when `--repo` is a `.txt` file. |
 | `--tools` | all 4 | Space-separated list: `gitleaks`, `trufflehog`, `detect-secrets`, `titus` |
 | `--threads` | `1` | Number of **repos** (projects) to scan in parallel. All 4 tools always run concurrently within each repo regardless of this value. **Recommended: no more than 4** — each repo spawns 4 tool processes, so `--threads 4` = up to 16 concurrent processes. |
 | `--timeout` | no limit | Max seconds per tool per repo. |
@@ -54,7 +55,27 @@ python main.py --repo ~/all-repos --out ./results --threads 2
 
 # Only run Gitleaks and Titus, 30-min timeout
 python main.py --repo ~/my-app --out ./results --tools gitleaks titus --timeout 1800
+
+# Scan from a list of repository URLs (cloned via SSH)
+python main.py --repo repos.txt --clone-dir ./cloned_repos --out ./results
 ```
+
+### Batch scanning from a repo list
+
+Create a plain-text file with one repository URL per line. Both HTTPS and SSH formats are accepted — HTTPS URLs are automatically converted to SSH (`git@github.com:…`) for cloning. Blank lines and lines starting with `#` are ignored.
+
+```text
+# repos.txt
+https://github.com/org/backend-api
+https://github.com/org/frontend-app
+git@github.com:org/infra-config.git
+```
+
+```bash
+python main.py --repo repos.txt --clone-dir ./src --out ./results
+```
+
+Omnileak will clone every listed repository into `--clone-dir` (skipping any that are already present), then scan them all. The cloned repos remain on disk after the scan so you can re-run without re-downloading.
 
 ---
 
@@ -65,6 +86,7 @@ python main.py --repo ~/my-app --out ./results --tools gitleaks titus --timeout 
 ```
 results/
 └── my-app/
+    ├── my-app_latest_commit.txt           ← 📌 latest commit at scan time
     ├── my-app_gitleaks_raw.json           ← unmodified Gitleaks output
     ├── my-app_trufflehog_raw.json         ← unmodified Trufflehog NDJSON
     ├── my-app_detect_secrets_raw.json     ← unmodified Detect Secrets output
@@ -81,6 +103,7 @@ results/
 ├── global_aggregated_secrets.json     ← ✅ all repos combined
 ├── global_secrets_report.xlsx         ← ✅ Excel across all repos
 ├── repo-alpha/
+│   ├── repo-alpha_latest_commit.txt   ← 📌 latest commit at scan time
 │   ├── repo-alpha_aggregated_secrets.json
 │   ├── repo-alpha_secrets_report.xlsx
 │   └── ...raw outputs...
@@ -88,6 +111,17 @@ results/
 │   └── ...
 └── repo-gamma/
     └── ...
+```
+
+The `_latest_commit.txt` file is created **before** scanning begins and records the HEAD revision so you can track exactly what was already scanned:
+
+```
+repository: my-app
+commit:     a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+short:      a1b2c3d
+author:     Jane Doe
+date:       2025-01-15T10:30:00+00:00
+subject:    fix: remove hardcoded credentials
 ```
 
 Each Excel file has a **General** tab (all deduplicated findings) plus one tab per tool. Columns: `id`, `repository`, `file_path`, `line_number`, `secret_type`, `secret_value`, `commit` (clickable link), `found_by`.

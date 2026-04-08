@@ -11,7 +11,7 @@ if os.path.isdir(_local_bin):
     os.environ["PATH"] = _local_bin + os.pathsep + os.environ.get("PATH", "")
 
 from scanners import GitleaksScanner, TrufflehogScanner, DetectSecretsScanner, TitusScanner, resolve_repo_url
-from core import Deduplicator, Reporter, ensure_tools
+from core import Deduplicator, Reporter, ensure_tools, read_repo_list, clone_repos, save_commit_info
 
 logging.basicConfig(
     level=logging.INFO,
@@ -93,6 +93,13 @@ def process_repo(repo_path, output_dir, tool_names, timeout):
     Returns the raw (pre-dedup) findings for global aggregation.
     """
     logger.info(f"--- Scanning repository: {repo_path} ---")
+
+    # Record the latest commit before scanning so we can track history
+    repo_name = os.path.basename(repo_path.rstrip("/"))
+    repo_out_for_commit = os.path.join(output_dir, repo_name)
+    os.makedirs(repo_out_for_commit, exist_ok=True)
+    save_commit_info(repo_path, repo_out_for_commit)
+
     findings, repo_out = scan_single_repo(repo_path, output_dir, tool_names, timeout)
 
     repo_name = os.path.basename(repo_path.rstrip("/"))
@@ -129,9 +136,15 @@ def main():
     )
     parser.add_argument(
         "--repo", required=True,
-        help="Path to a single repository OR a directory containing multiple repositories.",
+        help="Path to a single repository, a directory containing multiple repositories, "
+             "OR a .txt file listing repository URLs (one per line).",
     )
     parser.add_argument("--out", required=True, help="Output directory for reports.")
+    parser.add_argument(
+        "--clone-dir", default=None,
+        help="Directory to clone repositories into when --repo is a .txt file. "
+             "Required when --repo points to a .txt file.",
+    )
     parser.add_argument(
         "--threads", type=int, default=1,
         help="Number of repos to scan in parallel (default: 1). "
@@ -158,7 +171,23 @@ def main():
     # Auto-install any missing CLI tools before scanning
     ensure_tools(args.tools, _local_bin)
 
-    repos = discover_repos(args.repo)
+    # Handle .txt file with list of repository URLs
+    if args.repo.endswith(".txt") and os.path.isfile(args.repo):
+        if not args.clone_dir:
+            logger.error("--clone-dir is required when --repo is a .txt file.")
+            sys.exit(1)
+        urls = read_repo_list(args.repo)
+        if not urls:
+            logger.error(f"No repository URLs found in {args.repo}")
+            sys.exit(1)
+        logger.info(f"Read {len(urls)} repository URL(s) from {args.repo}")
+        cloned = clone_repos(urls, args.clone_dir)
+        if not cloned:
+            logger.error("No repositories were successfully cloned. Aborting.")
+            sys.exit(1)
+        repos = cloned
+    else:
+        repos = discover_repos(args.repo)
     logger.info(f"Discovered {len(repos)} repository(ies) to scan.")
 
     global_start = time.time()
