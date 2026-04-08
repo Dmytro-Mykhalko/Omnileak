@@ -201,7 +201,7 @@ def main():
             logger.error(f"No repository URLs found in {args.clone_urls}")
             sys.exit(1)
         logger.info(f"Read {len(urls)} repository URL(s) from {args.clone_urls}")
-        cloned = clone_repos(urls, args.clone_dir)
+        cloned = clone_repos(urls, args.clone_dir, threads=args.threads)
         if not cloned:
             logger.error("No repositories were successfully cloned.")
             if not repos:

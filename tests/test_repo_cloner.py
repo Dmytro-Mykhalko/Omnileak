@@ -154,6 +154,39 @@ class TestCloneReposMocked:
         result = clone_repos(urls, dest)
         assert result == []
 
+    @patch("core.repo_cloner.subprocess.run")
+    def test_parallel_cloning(self, mock_run, tmp_path):
+        """Multiple URLs with threads > 1 should all be cloned."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        urls = [
+            "https://github.com/octocat/hello-world",
+            "https://github.com/octocat/Spoon-Knife",
+            "https://github.com/octocat/linguist",
+        ]
+        dest = str(tmp_path / "cloned")
+
+        result = clone_repos(urls, dest, threads=3)
+
+        assert len(result) == 3
+        assert mock_run.call_count == 3
+        cloned_names = sorted(os.path.basename(p) for p in result)
+        assert cloned_names == ["Spoon-Knife", "hello-world", "linguist"]
+
+    @patch("core.repo_cloner.subprocess.run")
+    def test_threads_default_is_sequential(self, mock_run, tmp_path):
+        """Default threads=1 should still clone all repos."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        urls = [
+            "https://github.com/octocat/hello-world",
+            "https://github.com/octocat/Spoon-Knife",
+        ]
+        dest = str(tmp_path / "cloned")
+
+        result = clone_repos(urls, dest)
+
+        assert len(result) == 2
+        assert mock_run.call_count == 2
+
 
 # ------------------------------------------------------------------
 # Integration test — actually clones from GitHub (public repo)

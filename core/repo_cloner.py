@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +76,44 @@ def read_repo_list(filepath: str) -> list[str]:
     return urls
 
 
-def clone_repos(urls: list[str], dest_dir: str) -> list[str]:
+def _clone_single(url: str, dest_dir: str) -> str | None:
+    """Clone a single repository. Returns the local path on success, else None."""
+    ssh_url = _to_ssh_url(url)
+    name = _repo_name_from_url(url)
+    target = os.path.join(dest_dir, name)
+
+    if os.path.isdir(os.path.join(target, ".git")):
+        logger.info(f"[cloner] {name} already cloned at {target}, skipping.")
+        return target
+
+    logger.info(f"[cloner] Cloning {ssh_url} → {target}")
+    try:
+        result = subprocess.run(
+            ["git", "clone", ssh_url, target],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        if result.returncode == 0:
+            logger.info(f"[cloner] Successfully cloned {name}")
+            return target
+        else:
+            logger.error(
+                f"[cloner] Failed to clone {ssh_url}: {result.stderr.strip()}"
+            )
+    except subprocess.TimeoutExpired:
+        logger.error(f"[cloner] Timed out cloning {ssh_url}")
+    except Exception as exc:
+        logger.error(f"[cloner] Error cloning {ssh_url}: {exc}")
+    return None
+
+
+def clone_repos(urls: list[str], dest_dir: str, threads: int = 1) -> list[str]:
     """Clone each repository in *urls* into *dest_dir* via SSH.
+
+    *threads* controls how many clones run in parallel (mirrors the
+    ``--threads`` CLI flag so cloning scales together with scanning).
 
     Returns the list of local paths that were successfully cloned.
     Already-cloned repos (directory exists and contains ``.git``) are
@@ -85,35 +122,18 @@ def clone_repos(urls: list[str], dest_dir: str) -> list[str]:
     os.makedirs(dest_dir, exist_ok=True)
     cloned_paths: list[str] = []
 
-    for url in urls:
-        ssh_url = _to_ssh_url(url)
-        name = _repo_name_from_url(url)
-        target = os.path.join(dest_dir, name)
-
-        if os.path.isdir(os.path.join(target, ".git")):
-            logger.info(f"[cloner] {name} already cloned at {target}, skipping.")
-            cloned_paths.append(target)
-            continue
-
-        logger.info(f"[cloner] Cloning {ssh_url} → {target}")
-        try:
-            result = subprocess.run(
-                ["git", "clone", ssh_url, target],
-                capture_output=True,
-                text=True,
-                timeout=300,
-                check=False,
-            )
-            if result.returncode == 0:
-                logger.info(f"[cloner] Successfully cloned {name}")
-                cloned_paths.append(target)
-            else:
-                logger.error(
-                    f"[cloner] Failed to clone {ssh_url}: {result.stderr.strip()}"
-                )
-        except subprocess.TimeoutExpired:
-            logger.error(f"[cloner] Timed out cloning {ssh_url}")
-        except Exception as exc:
-            logger.error(f"[cloner] Error cloning {ssh_url}: {exc}")
+    with ThreadPoolExecutor(max_workers=max(threads, 1)) as executor:
+        futures = {
+            executor.submit(_clone_single, url, dest_dir): url
+            for url in urls
+        }
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                path = future.result()
+                if path is not None:
+                    cloned_paths.append(path)
+            except Exception as exc:
+                logger.error(f"[cloner] Unexpected error cloning {url}: {exc}")
 
     return cloned_paths
