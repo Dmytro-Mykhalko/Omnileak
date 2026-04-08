@@ -135,15 +135,18 @@ def main():
         description="Omnileak — scan Git repos for hardcoded secrets with multiple tools."
     )
     parser.add_argument(
-        "--repo", required=True,
-        help="Path to a single repository, a directory containing multiple repositories, "
-             "OR a .txt file listing repository URLs (one per line).",
+        "--repo", default=None,
+        help="Path to a single repository OR a directory containing multiple repositories.",
     )
     parser.add_argument("--out", required=True, help="Output directory for reports.")
     parser.add_argument(
+        "--clone-urls", default=None,
+        help="Path to a .txt file listing repository URLs (one per line). "
+             "Repos are cloned via SSH into --clone-dir before scanning.",
+    )
+    parser.add_argument(
         "--clone-dir", default=None,
-        help="Directory to clone repositories into when --repo is a .txt file. "
-             "Required when --repo points to a .txt file.",
+        help="Directory to clone repositories into. Required when --clone-urls is used.",
     )
     parser.add_argument(
         "--threads", type=int, default=1,
@@ -161,9 +164,23 @@ def main():
     )
     args = parser.parse_args()
 
-    # Validate paths
-    if not os.path.exists(args.repo):
+    # At least one source of repos is required
+    if not args.repo and not args.clone_urls:
+        logger.error("At least one of --repo or --clone-urls is required.")
+        sys.exit(1)
+
+    # Validate --repo path when provided
+    if args.repo and not os.path.exists(args.repo):
         logger.error(f"Repository path does not exist: {args.repo}")
+        sys.exit(1)
+
+    # --clone-dir is required when --clone-urls is used
+    if args.clone_urls and not args.clone_dir:
+        logger.error("--clone-dir is required when --clone-urls is used.")
+        sys.exit(1)
+
+    if args.clone_urls and not os.path.isfile(args.clone_urls):
+        logger.error(f"Clone URLs file does not exist: {args.clone_urls}")
         sys.exit(1)
 
     os.makedirs(args.out, exist_ok=True)
@@ -171,23 +188,31 @@ def main():
     # Auto-install any missing CLI tools before scanning
     ensure_tools(args.tools, _local_bin)
 
-    # Handle .txt file with list of repository URLs
-    if args.repo.endswith(".txt") and os.path.isfile(args.repo):
-        if not args.clone_dir:
-            logger.error("--clone-dir is required when --repo is a .txt file.")
-            sys.exit(1)
-        urls = read_repo_list(args.repo)
+    repos = []
+
+    # Discover local repos from --repo
+    if args.repo:
+        repos.extend(discover_repos(args.repo))
+
+    # Clone and add repos from --clone-urls
+    if args.clone_urls:
+        urls = read_repo_list(args.clone_urls)
         if not urls:
-            logger.error(f"No repository URLs found in {args.repo}")
+            logger.error(f"No repository URLs found in {args.clone_urls}")
             sys.exit(1)
-        logger.info(f"Read {len(urls)} repository URL(s) from {args.repo}")
+        logger.info(f"Read {len(urls)} repository URL(s) from {args.clone_urls}")
         cloned = clone_repos(urls, args.clone_dir)
         if not cloned:
-            logger.error("No repositories were successfully cloned. Aborting.")
-            sys.exit(1)
-        repos = cloned
-    else:
-        repos = discover_repos(args.repo)
+            logger.error("No repositories were successfully cloned.")
+            if not repos:
+                logger.error("No repositories to scan. Aborting.")
+                sys.exit(1)
+        repos.extend(cloned)
+
+    if not repos:
+        logger.error("No repositories to scan. Aborting.")
+        sys.exit(1)
+
     logger.info(f"Discovered {len(repos)} repository(ies) to scan.")
 
     global_start = time.time()

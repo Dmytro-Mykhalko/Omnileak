@@ -37,27 +37,33 @@ Tools auto-download to `./bin/` on first run. To install them upfront instead:
 ## CLI Reference
 
 ```
-python main.py --repo <PATH> --out <PATH> [--clone-dir <PATH>] [--tools ...] [--threads N] [--timeout N]
+python main.py [--repo <PATH>] [--clone-urls <FILE> --clone-dir <PATH>] --out <PATH> [--tools ...] [--threads N] [--timeout N]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--repo` | **required** | Path to a Git repo, a directory containing multiple repos, **or a `.txt` file listing repository URLs** (one per line). |
+| `--repo` | — | Path to a Git repo **or** a directory containing multiple repos. |
+| `--clone-urls` | — | Path to a `.txt` file listing repository URLs (one per line). Repos are cloned via SSH into `--clone-dir` before scanning. |
+| `--clone-dir` | — | Directory to clone repositories into. **Required** when `--clone-urls` is used. |
 | `--out` | **required** | Output directory for reports. |
-| `--clone-dir` | — | Directory to clone repositories into. **Required** when `--repo` is a `.txt` file. |
 | `--tools` | all 4 | Space-separated list: `gitleaks`, `trufflehog`, `detect-secrets`, `titus` |
 | `--threads` | `1` | Number of **repos** (projects) to scan in parallel. All 4 tools always run concurrently within each repo regardless of this value. **Recommended: no more than 4** — each repo spawns 4 tool processes, so `--threads 4` = up to 16 concurrent processes. |
 | `--timeout` | no limit | Max seconds per tool per repo. |
 
+> **Note:** At least one of `--repo` or `--clone-urls` is required. When both are provided, all repositories (local + cloned) are scanned together and combined in the global report.
+
 ```bash
-# Scan multiple repos, 2 projects at a time
+# Scan local repos, 2 projects at a time
 python main.py --repo ~/all-repos --out ./results --threads 2
 
 # Only run Gitleaks and Titus, 30-min timeout
 python main.py --repo ~/my-app --out ./results --tools gitleaks titus --timeout 1800
 
-# Scan from a list of repository URLs (cloned via SSH)
-python main.py --repo repos.txt --clone-dir ./cloned_repos --out ./results
+# Clone repos from a URL list and scan them
+python main.py --clone-urls repos.txt --clone-dir ./cloned_repos --out ./results
+
+# Combine local repos AND a URL list in a single scan
+python main.py --repo ~/my-app --clone-urls repos.txt --clone-dir ./cloned_repos --out ./results
 ```
 
 ### Batch scanning from a repo list
@@ -72,7 +78,7 @@ git@github.com:org/infra-config.git
 ```
 
 ```bash
-python main.py --repo repos.txt --clone-dir ./src --out ./results
+python main.py --clone-urls repos.txt --clone-dir ./src --out ./results
 ```
 
 Omnileak will clone every listed repository into `--clone-dir` (skipping any that are already present), then scan them all. The cloned repos remain on disk after the scan so you can re-run without re-downloading.
