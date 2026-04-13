@@ -7,8 +7,8 @@ from openpyxl.styles import Font
 
 logger = logging.getLogger(__name__)
 
-# Keep secret_value short in Excel — full values live in the JSON report.
-EXCEL_SECRET_VALUE_LIMIT = 200
+# Truncate abnormally large values that would break Excel (limit: 32 767 chars).
+EXCEL_SECRET_VALUE_LIMIT = 5000
 
 COLUMNS = [
     "id", "repository", "file_path", "line_number",
