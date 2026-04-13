@@ -7,8 +7,8 @@ from openpyxl.styles import Font
 
 logger = logging.getLogger(__name__)
 
-# Excel cells are limited to 32 767 characters.
-EXCEL_CELL_CHAR_LIMIT = 32_767
+# Keep secret_value short in Excel — full values live in the JSON report.
+EXCEL_SECRET_VALUE_LIMIT = 200
 
 COLUMNS = [
     "id", "repository", "file_path", "line_number",
@@ -41,11 +41,16 @@ def _build_commit_url(repo_url, commit_hash, file_path, line_number=""):
 
 
 def _truncate_for_excel(df):
-    """Truncate string cells that exceed Excel's per-cell character limit."""
+    """Truncate secret_value to keep Excel cells readable.
+
+    Full values are always available in the JSON report.
+    """
     df = df.copy()
-    for col in df.select_dtypes(include=["object", "string"]).columns:
-        df[col] = df[col].apply(
-            lambda v: v[:EXCEL_CELL_CHAR_LIMIT] if isinstance(v, str) and len(v) > EXCEL_CELL_CHAR_LIMIT else v
+    if "secret_value" in df.columns:
+        df["secret_value"] = df["secret_value"].apply(
+            lambda v: v[:EXCEL_SECRET_VALUE_LIMIT] + " [truncated]"
+            if isinstance(v, str) and len(v) > EXCEL_SECRET_VALUE_LIMIT
+            else v
         )
     return df
 
