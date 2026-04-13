@@ -164,6 +164,11 @@ def main():
     )
     args = parser.parse_args()
 
+    # Normalize --tools: accept both space- and comma-separated values.
+    args.tools = [
+        t.strip() for raw in args.tools for t in raw.split(",") if t.strip()
+    ]
+
     # At least one source of repos is required
     if not args.repo and not args.clone_urls:
         logger.error("At least one of --repo or --clone-urls is required.")
