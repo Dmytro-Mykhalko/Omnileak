@@ -7,6 +7,9 @@ from openpyxl.styles import Font
 
 logger = logging.getLogger(__name__)
 
+# Excel cells are limited to 32 767 characters.
+EXCEL_CELL_CHAR_LIMIT = 32_767
+
 COLUMNS = [
     "id", "repository", "file_path", "line_number",
     "secret_type", "secret_value", "commit", "found_by",
@@ -35,6 +38,16 @@ def _build_commit_url(repo_url, commit_hash, file_path, line_number=""):
     if line_number:
         url += f"#L{line_number}"
     return url
+
+
+def _truncate_for_excel(df):
+    """Truncate string cells that exceed Excel's per-cell character limit."""
+    df = df.copy()
+    for col in df.select_dtypes(include=["object", "string"]).columns:
+        df[col] = df[col].apply(
+            lambda v: v[:EXCEL_CELL_CHAR_LIMIT] if isinstance(v, str) and len(v) > EXCEL_CELL_CHAR_LIMIT else v
+        )
+    return df
 
 
 class Reporter:
@@ -133,7 +146,7 @@ class Reporter:
 
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
             # General tab — all deduplicated findings
-            df_all.to_excel(writer, sheet_name="General", index=False)
+            _truncate_for_excel(df_all).to_excel(writer, sheet_name="General", index=False)
             self._add_commit_hyperlinks(writer.sheets["General"], commit_urls_all)
 
             # Per-tool tabs
@@ -145,7 +158,7 @@ class Reporter:
                 if not df_tool.empty:
                     df_tool = df_tool[COLUMNS]
                     sheet_name = str(tool).capitalize()[:31]
-                    df_tool.to_excel(writer, sheet_name=sheet_name, index=False)
+                    _truncate_for_excel(df_tool).to_excel(writer, sheet_name=sheet_name, index=False)
                     self._add_commit_hyperlinks(writer.sheets[sheet_name], tool_urls)
 
             # Add auto-filters to every sheet
