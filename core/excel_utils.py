@@ -1,13 +1,14 @@
-"""Shared Excel sanitization utilities.
+"""Shared Excel utilities.
 
 Used by both ``core.reporter`` (scan results) and
 ``core.ai.triage_reporter`` (AI triage results) to prepare DataFrames
-for openpyxl.
+for openpyxl — sanitization, URL building, and commit hyperlinks.
 """
 
 import re
 
 import pandas as pd
+from openpyxl.styles import Font
 
 # Control characters that are illegal in XML / Excel cells.
 ILLEGAL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -36,3 +37,67 @@ def sanitize_for_excel(df):
             else v
         )
     return df
+
+
+def build_commit_url(repo_url, commit_hash, file_path, line_number=""):
+    """Build a browser URL pointing to a specific file at a given commit.
+
+    Supports GitHub and GitLab URL patterns.  Returns an empty string
+    when there is not enough information to construct a valid link.
+    """
+    if not repo_url or not commit_hash:
+        return ""
+    if "gitlab" in repo_url.lower():
+        url = f"{repo_url}/-/blob/{commit_hash}/{file_path}"
+    else:
+        url = f"{repo_url}/blob/{commit_hash}/{file_path}"
+    if line_number:
+        url += f"#L{line_number}"
+    return url
+
+
+def add_commit_hyperlinks(ws, repo_url, commit_data):
+    """Turn the ``commit`` column into clickable hyperlinks.
+
+    Parameters
+    ----------
+    ws : openpyxl.worksheet.worksheet.Worksheet
+    repo_url : str
+        Remote origin URL (e.g. ``https://github.com/org/repo``).
+    commit_data : list[dict] | pandas.DataFrame
+        Rows with ``commit``, ``file_path``, ``line_number`` fields,
+        aligned with the worksheet data rows (starting at row 2).
+    """
+    if not repo_url:
+        return
+
+    commit_col = None
+    for col_idx in range(1, ws.max_column + 1):
+        if ws.cell(row=1, column=col_idx).value == "commit":
+            commit_col = col_idx
+            break
+    if commit_col is None:
+        return
+
+    link_font = Font(color="0563C1", underline="single")
+
+    if isinstance(commit_data, pd.DataFrame):
+        rows = (row for _, row in commit_data.iterrows())
+    else:
+        rows = commit_data
+
+    for row_idx, row in enumerate(rows, start=2):
+        if isinstance(row, dict):
+            commit = str(row.get("commit", row.get("commit_hash", "")))
+            fp = str(row.get("file_path", ""))
+            ln = str(row.get("line_number", ""))
+        else:
+            commit = str(row.get("commit", row.get("commit_hash", "")))
+            fp = str(row.get("file_path", ""))
+            ln = str(row.get("line_number", ""))
+
+        url = build_commit_url(repo_url, commit, fp, ln)
+        if url:
+            cell = ws.cell(row=row_idx, column=commit_col)
+            cell.hyperlink = url
+            cell.font = link_font

@@ -21,7 +21,7 @@ import os
 import pandas as pd
 from openpyxl.styles import Font, PatternFill
 
-from core.excel_utils import sanitize_for_excel, SECRET_VALUE_LIMIT
+from core.excel_utils import sanitize_for_excel, SECRET_VALUE_LIMIT, add_commit_hyperlinks
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def _apply_colors(ws):
                 ws.cell(row=row_idx, column=cls_col).fill = _DUP_FILL
 
 
-def _write_sheet(writer, df, sheet_name, columns):
+def _write_sheet(writer, df, sheet_name, columns, repo_url=""):
     """Write a DataFrame to a named sheet with sanitization and formatting."""
     cols = [c for c in columns if c in df.columns]
     out = sanitize_for_excel(_flatten_lists(df[cols].copy()))
@@ -109,6 +109,7 @@ def _write_sheet(writer, df, sheet_name, columns):
     ws = writer.sheets[sheet_name]
     ws.auto_filter.ref = ws.dimensions
     _apply_colors(ws)
+    add_commit_hyperlinks(ws, repo_url, out)
     for col_idx in range(1, ws.max_column + 1):
         ws.cell(row=1, column=col_idx).font = Font(bold=True)
 
@@ -145,6 +146,8 @@ def convert(json_path, excel_path=None):
     df_all = pd.DataFrame(findings) if findings else pd.DataFrame(columns=FINDING_COLUMNS)
     df_all = _sort_findings(df_all)
 
+    repo_url = meta.get("repo_url", "")
+
     df_tp = df_all[df_all["classification"] == "TRUE_POSITIVE"].copy()
     df_dup = df_all[df_all["classification"] == "DUPLICATE"].copy()
     df_fp = df_all[df_all["classification"] == "FALSE_POSITIVE"].copy()
@@ -169,16 +172,16 @@ def convert(json_path, excel_path=None):
         for col_idx in range(1, ws_summary.max_column + 1):
             ws_summary.cell(row=1, column=col_idx).font = Font(bold=True)
 
-        _write_sheet(writer, df_all, "All Findings", FINDING_COLUMNS)
+        _write_sheet(writer, df_all, "All Findings", FINDING_COLUMNS, repo_url)
 
         if not df_tp.empty:
-            _write_sheet(writer, df_tp, "True Positives", FINDING_COLUMNS)
+            _write_sheet(writer, df_tp, "True Positives", FINDING_COLUMNS, repo_url)
 
         if not df_dup.empty:
-            _write_sheet(writer, df_dup, "Duplicates", FINDING_COLUMNS)
+            _write_sheet(writer, df_dup, "Duplicates", FINDING_COLUMNS, repo_url)
 
         if not df_fp.empty:
-            _write_sheet(writer, df_fp, "False Positives", FINDING_COLUMNS)
+            _write_sheet(writer, df_fp, "False Positives", FINDING_COLUMNS, repo_url)
 
         if composites:
             df_comp = pd.DataFrame(composites)

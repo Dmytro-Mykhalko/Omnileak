@@ -97,6 +97,7 @@ def _make_composite():
 def _make_meta(**overrides):
     meta = {
         "repo": "test-repo",
+        "repo_url": "",
         "scan_date": "2026-04-15T10:00:00Z",
         "last_commit": "abc1234",
         "mode": "full_scan",
@@ -495,3 +496,80 @@ class TestFileNaming:
         json_path = _write_json(tmp_path)  # writes triage-results.json
         xlsx = convert(json_path)
         assert os.path.basename(xlsx) == "triage-results.xlsx"
+
+
+# ── Commit hyperlinks ────────────────────────────────────────────────────────
+
+class TestCommitHyperlinks:
+    def test_commit_cells_have_hyperlinks(self, tmp_path):
+        meta = _make_meta(repo_url="https://github.com/org/test-repo")
+        tp = _make_tp(1)
+        tp["commit"] = "abc1234deadbeef"
+        tp["file_path"] = "config/app.yml"
+        tp["line_number"] = 10
+        json_path = _write_json(tmp_path, findings=[tp], meta=meta)
+        xlsx = convert(json_path)
+        wb = load_workbook(xlsx)
+        ws = wb["All Findings"]
+
+        commit_col = None
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=1, column=col).value == "commit":
+                commit_col = col
+                break
+        assert commit_col is not None
+
+        cell = ws.cell(row=2, column=commit_col)
+        assert cell.hyperlink is not None
+        assert "abc1234deadbeef" in cell.hyperlink.target
+        assert "config/app.yml" in cell.hyperlink.target
+        assert "#L10" in cell.hyperlink.target
+
+    def test_no_hyperlinks_without_repo_url(self, tmp_path):
+        json_path = _write_json(tmp_path, findings=[_make_tp(1)])
+        xlsx = convert(json_path)
+        wb = load_workbook(xlsx)
+        ws = wb["All Findings"]
+
+        commit_col = None
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=1, column=col).value == "commit":
+                commit_col = col
+                break
+
+        cell = ws.cell(row=2, column=commit_col)
+        assert cell.hyperlink is None
+
+    def test_gitlab_url_format(self, tmp_path):
+        meta = _make_meta(repo_url="https://gitlab.example.com/org/repo")
+        tp = _make_tp(1)
+        tp["commit"] = "def5678"
+        json_path = _write_json(tmp_path, findings=[tp], meta=meta)
+        xlsx = convert(json_path)
+        wb = load_workbook(xlsx)
+        ws = wb["All Findings"]
+
+        commit_col = None
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=1, column=col).value == "commit":
+                commit_col = col
+                break
+
+        cell = ws.cell(row=2, column=commit_col)
+        assert "/-/blob/" in cell.hyperlink.target
+
+    def test_hyperlinks_on_tp_sheet(self, tmp_path):
+        meta = _make_meta(repo_url="https://github.com/org/repo")
+        json_path = _write_json(tmp_path, findings=[_make_tp(1)], meta=meta)
+        xlsx = convert(json_path)
+        wb = load_workbook(xlsx)
+        ws = wb["True Positives"]
+
+        commit_col = None
+        for col in range(1, ws.max_column + 1):
+            if ws.cell(row=1, column=col).value == "commit":
+                commit_col = col
+                break
+
+        cell = ws.cell(row=2, column=commit_col)
+        assert cell.hyperlink is not None

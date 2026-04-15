@@ -222,6 +222,7 @@ Write `<output_directory>/<repo_name>_triage-results_<risk_score>.json` with **A
 {
   "meta": {
     "repo": "<repo_name>",
+    "repo_url": "<remote origin URL of the repo, e.g. https://github.com/org/repo — resolve via `git -C <repo_path> remote get-url origin`; empty string if unavailable>",
     "scan_date": "<ISO 8601 timestamp>",
     "last_commit": "<latest_commit_in_scanned_repo: already found by omnileaks; stored in <out-dir-for-repository>/<repo>_latest_commit.txt>",
     "mode": "full_scan | triage_only",
