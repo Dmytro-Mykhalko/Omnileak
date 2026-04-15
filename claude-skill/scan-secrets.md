@@ -101,9 +101,12 @@ Read all found aggregated JSON files. Note the total finding count.
 
 ### Step 5: AI Triage — Classify Each Finding
 
-#### 5a: Deduplicate First
+#### 5a: Deduplicate — Keep One, Mark the Rest
 
-Before classifying, group findings that represent the **same logical secret** — the same credential value appearing in multiple commits, or detected by multiple tools in the same file. Treat each group as one finding. Track all original `id` values in `omnileak_ids`.
+Group findings that represent the **same logical secret** — the same credential value appearing in multiple commits, or detected by multiple tools in the same file.
+
+- Pick **one** representative finding per group → classify it as `TRUE_POSITIVE` or `FALSE_POSITIVE` normally. Track all original `id` values in its `omnileak_ids`.
+- For **every other** entry in the group, emit a separate finding with `"classification": "DUPLICATE"` and set `"duplicate_of": <id of the primary finding>`. Copy severity/environment/etc. from the primary. This ensures the total finding count in the JSON matches the raw Omnileak count — nothing is silently dropped.
 
 #### 5b: Handle Large Result Sets
 
@@ -142,6 +145,7 @@ For every deduplicated finding, classify as TRUE POSITIVE or FALSE POSITIVE.
 - Coveralls badge URLs, CI status image links
 - Base64 strings that are test expected output, not credentials
 - Regex patterns or type definitions containing the word "secret"
+- Helm chart `existingSecret: <name>` references where the value is a simple resource name (no high-entropy string) — this is a Kubernetes secret reference, not a credential itself
 
 **Tool-specific FP patterns** — be extra skeptical of:
 - **Trufflehog**: high-entropy strings in minified JS, base64-encoded non-secrets, hex color codes
@@ -197,11 +201,22 @@ After triaging, perform additional analysis by reading repo files directly:
 
 3. **Severity by code context**: For secrets in migration files or code with environment branching (`if getenv('APP_ENV')`) — determine which branch is production vs staging vs local and classify severity accordingly. Production credentials = CRITICAL. Staging = HIGH. Local/dev = MEDIUM.
 
-4. **Files tools typically miss**: `.sql` dump files, `.dist`/`.example` files, service-specific config subdirectories (centrifugo, nginx, etc.), IDE configs in git history (`.idea/`), CI workflow files.
+4. **Password / credential reuse across environments**: Compare secret values across different environment config files (e.g. `dev.yml` vs `staging.yml` vs `production.yml`). Identical credentials shared between environments is a composite vulnerability — if one environment is compromised, all others using the same credential are too. Flag each reuse pair.
+
+5. **Files tools typically miss**: `.sql` dump files, `.dist`/`.example` files, service-specific config subdirectories (centrifugo, nginx, etc.), IDE configs in git history (`.idea/`), CI workflow files.
+
+6. **Docker credential base64 decoding**: When a Kubernetes `dockerconfigjson` secret or `.dockercfg` is found (typically a base64 blob), decode the base64 chain to extract the inner `auth` field, which is usually `username:password` in base64. Report the decoded credentials as a separate finding — the raw base64 blob hides the actual blast radius.
 
 ### Step 7: Generate Structured JSON
 
-Write `<output_directory>/triage-results.json` with **ALL findings** (both true positives and false positives) so every classification decision is tracked:
+All output files follow the naming convention: `<repo_name>_<base_name>_<risk_score>.<ext>`
+For example, repo "my-app" with risk score 72 produces:
+- `my-app_triage-results_72.json`
+- `my-app_triage-results_72.xlsx`
+- `my-app_secrets-triage-report_72.md`
+- `my-app_pipeline-improvements_72.md`
+
+Write `<output_directory>/<repo_name>_triage-results_<risk_score>.json` with **ALL findings** (true positives, false positives, AND duplicates) so every classification decision is tracked and the total count matches the raw Omnileak output:
 
 ```json
 {
@@ -234,7 +249,8 @@ Write `<output_directory>/triage-results.json` with **ALL findings** (both true 
       "remediation": "ROTATE_IMMEDIATELY",
       "effort": "quick",
       "detected_by": ["detect-secrets", "gitleaks", "titus", "trufflehog"],
-      "fp_reason": null
+      "fp_reason": null,
+      "duplicate_of": null
     },
     {
       "id": 2,
@@ -252,7 +268,27 @@ Write `<output_directory>/triage-results.json` with **ALL findings** (both true 
       "remediation": null,
       "effort": null,
       "detected_by": ["detect-secrets"],
-      "fp_reason": "Translation file in vendor — keyword match, not a credential"
+      "fp_reason": "Translation file in vendor — keyword match, not a credential",
+      "duplicate_of": null
+    },
+    {
+      "id": 3,
+      "omnileak_ids": [103],
+      "classification": "DUPLICATE",
+      "severity": "CRITICAL",
+      "category": "GitHub PAT",
+      "secret_value": "<same as finding 1>",
+      "file_path": "path/to/file",
+      "line_number": 3,
+      "commit": "<different_hash>",
+      "on_disk": false,
+      "confidence": null,
+      "environment": null,
+      "remediation": null,
+      "effort": null,
+      "detected_by": ["gitleaks"],
+      "fp_reason": null,
+      "duplicate_of": 1
     }
   ],
   "composite_vulnerabilities": [
@@ -269,7 +305,7 @@ Write `<output_directory>/triage-results.json` with **ALL findings** (both true 
 
 **Field rules:**
 - `omnileak_ids`: the original `id` values from the aggregated JSON that map to this finding (multiple if deduplicated)
-- `classification`: `TRUE_POSITIVE` or `FALSE_POSITIVE`
+- `classification`: `TRUE_POSITIVE`, `FALSE_POSITIVE`, or `DUPLICATE`
 - `severity`: one of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` for TPs; `null` for FPs
 - `environment`: one of `production`, `staging`, `local-dev`, `test`, `vendor`, `unknown` for TPs; `null` for FPs
 - `remediation`: one of `ROTATE_IMMEDIATELY`, `ROTATE_SOON`, `CLEANUP` for TPs; `null` for FPs
@@ -277,7 +313,8 @@ Write `<output_directory>/triage-results.json` with **ALL findings** (both true 
 - `confidence`: one of `high`, `medium`, `low` for TPs; `null` for FPs
 - `on_disk`: `true` if secret is currently in the working tree, `false` if history-only, `"unknown"` if no repo access
 - `detected_by`: list of tools that found it, or `["AI"]` for AI-only findings
-- `fp_reason`: short explanation of why a finding is a false positive; `null` for TPs
+- `fp_reason`: short explanation of why a finding is a false positive; `null` for TPs and DUPs
+- `duplicate_of`: the `id` of the primary finding this is a duplicate of; `null` for TPs and FPs
 
 **Risk score** (in `meta.risk_score`): compute as:
 - Each CRITICAL finding: +10 points
@@ -293,12 +330,15 @@ Write `<output_directory>/triage-results.json` with **ALL findings** (both true 
 Convert the triage JSON to an Excel workbook for easy review and filtering.
 
 ```bash
-cd <omnileak_path> && python3 -m core.ai.triage_reporter <output_directory>/triage-results.json
+cd <omnileak_path> && python3 -m core.ai.triage_reporter <output_directory>/<repo_name>_triage-results_<risk_score>.json
 ```
 
-This produces `<output_directory>/triage-results.xlsx` with tabs:
-- **All Findings** — every finding (TPs and FPs), sorted by classification then severity
+The script derives the `.xlsx` name from the input `.json` name automatically.
+
+This produces `<output_directory>/<repo_name>_triage-results_<risk_score>.xlsx` with tabs:
+- **All Findings** — every finding (TPs, DUPs, and FPs), sorted by classification then severity
 - **True Positives** — only TPs, sorted by severity descending
+- **Duplicates** — duplicate findings linked to their primary (audit trail)
 - **False Positives** — only FPs, for audit trail
 - **Composite Vulns** — composite vulnerabilities (if any)
 
@@ -308,7 +348,7 @@ If the script fails, report the error but continue to the next step.
 
 ### Step 9: Generate Markdown Report
 
-Write `<output_directory>/secrets-triage-report.md`:
+Write `<output_directory>/<repo_name>_secrets-triage-report_<risk_score>.md`:
 
 #### Section 1: Executive Summary
 Table with: total tool findings, true positives, false positives filtered, AI-only findings, breakdown by severity.
@@ -338,7 +378,7 @@ For each item, include the effort estimate: `[quick]`, `[medium]`, or `[complex]
 
 ### Step 10: Self-Reflection — Pipeline Improvement Analysis
 
-After completing all analysis, reflect on this run and write `<output_directory>/pipeline-improvements.md`:
+After completing all analysis, reflect on this run and write `<output_directory>/<repo_name>_pipeline-improvements_<risk_score>.md`:
 
 #### Section 1: What Went Well
 - Which tool caught the most true positives?
@@ -381,4 +421,5 @@ Tell the user:
 - True positives after AI triage (breakdown: X critical, X high, X medium, X low)
 - Additional AI-only findings (or "skipped — no repo path" if Step 6 was skipped)
 - False positives filtered out
-- Paths to: `triage-results.json`, `triage-results.xlsx`, `secrets-triage-report.md`, and `pipeline-improvements.md`
+- Duplicates count
+- Paths to all generated files (named `<repo>_<base>_<score>.<ext>`)

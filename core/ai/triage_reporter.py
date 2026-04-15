@@ -37,12 +37,13 @@ _SEVERITY_FILL = {
     "LOW": PatternFill(start_color="87CEEB", end_color="87CEEB", fill_type="solid"),
 }
 _FP_FILL = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+_DUP_FILL = PatternFill(start_color="C0C0C0", end_color="C0C0C0", fill_type="solid")
 
 FINDING_COLUMNS = [
     "id", "classification", "severity", "confidence", "category",
     "secret_value", "file_path", "line_number", "commit",
     "on_disk", "environment", "remediation", "effort",
-    "detected_by", "fp_reason", "omnileak_ids",
+    "detected_by", "fp_reason", "duplicate_of", "omnileak_ids",
 ]
 
 COMPOSITE_COLUMNS = [
@@ -66,8 +67,8 @@ def _sort_findings(df):
     """Sort by classification (TP first) then severity (CRITICAL first)."""
     df = df.copy()
     df["_cls_order"] = df["classification"].map(
-        {"TRUE_POSITIVE": 0, "FALSE_POSITIVE": 1}
-    ).fillna(2)
+        {"TRUE_POSITIVE": 0, "DUPLICATE": 1, "FALSE_POSITIVE": 2}
+    ).fillna(3)
     df["_sev_order"] = df["severity"].map(_SEVERITY_ORDER).fillna(99)
     df = df.sort_values(["_cls_order", "_sev_order", "id"]).drop(
         columns=["_cls_order", "_sev_order"]
@@ -96,6 +97,8 @@ def _apply_colors(ws):
             val = ws.cell(row=row_idx, column=cls_col).value
             if val == "FALSE_POSITIVE":
                 ws.cell(row=row_idx, column=cls_col).fill = _FP_FILL
+            elif val == "DUPLICATE":
+                ws.cell(row=row_idx, column=cls_col).fill = _DUP_FILL
 
 
 def _write_sheet(writer, df, sheet_name, columns):
@@ -133,9 +136,7 @@ def convert(json_path, excel_path=None):
         data = json.load(f)
 
     if excel_path is None:
-        excel_path = os.path.join(
-            os.path.dirname(json_path), "triage-results.xlsx"
-        )
+        excel_path = os.path.splitext(json_path)[0] + ".xlsx"
 
     findings = data.get("findings", [])
     composites = data.get("composite_vulnerabilities", [])
@@ -145,6 +146,7 @@ def convert(json_path, excel_path=None):
     df_all = _sort_findings(df_all)
 
     df_tp = df_all[df_all["classification"] == "TRUE_POSITIVE"].copy()
+    df_dup = df_all[df_all["classification"] == "DUPLICATE"].copy()
     df_fp = df_all[df_all["classification"] == "FALSE_POSITIVE"].copy()
 
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
@@ -172,6 +174,9 @@ def convert(json_path, excel_path=None):
         if not df_tp.empty:
             _write_sheet(writer, df_tp, "True Positives", FINDING_COLUMNS)
 
+        if not df_dup.empty:
+            _write_sheet(writer, df_dup, "Duplicates", FINDING_COLUMNS)
+
         if not df_fp.empty:
             _write_sheet(writer, df_fp, "False Positives", FINDING_COLUMNS)
 
@@ -180,8 +185,8 @@ def convert(json_path, excel_path=None):
             _write_sheet(writer, df_comp, "Composite Vulns", COMPOSITE_COLUMNS)
 
     logger.info(
-        "Wrote triage Excel: %s (%d TPs, %d FPs, %d composites)",
-        excel_path, len(df_tp), len(df_fp), len(composites),
+        "Wrote triage Excel: %s (%d TPs, %d DUPs, %d FPs, %d composites)",
+        excel_path, len(df_tp), len(df_dup), len(df_fp), len(composites),
     )
     return excel_path
 

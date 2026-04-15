@@ -36,6 +36,29 @@ def _make_tp(id_=1, severity="HIGH", on_disk=True, environment="production"):
         "effort": "quick",
         "detected_by": ["gitleaks", "trufflehog"],
         "fp_reason": None,
+        "duplicate_of": None,
+    }
+
+
+def _make_dup(id_=50, duplicate_of=1):
+    return {
+        "id": id_,
+        "omnileak_ids": [id_],
+        "classification": "DUPLICATE",
+        "severity": "HIGH",
+        "category": "Generic API Key",
+        "secret_value": "sk_test_1_FAKEFAKEFAKE",
+        "file_path": "config/app_1.yml",
+        "line_number": 10,
+        "commit": f"{'c' * 7}{id_}",
+        "on_disk": False,
+        "confidence": None,
+        "environment": None,
+        "remediation": None,
+        "effort": None,
+        "detected_by": ["gitleaks"],
+        "fp_reason": None,
+        "duplicate_of": duplicate_of,
     }
 
 
@@ -57,6 +80,7 @@ def _make_fp(id_=99):
         "effort": None,
         "detected_by": ["detect-secrets"],
         "fp_reason": "Translation file in vendor directory",
+        "duplicate_of": None,
     }
 
 
@@ -403,3 +427,71 @@ class TestFlattenLists:
         df = pd.DataFrame([{"detected_by": "already_string"}])
         result = _flatten_lists(df.copy())
         assert result.iloc[0]["detected_by"] == "already_string"
+
+
+# ── Duplicate classification ─────────────────────────────────────────────────
+
+class TestDuplicates:
+    def test_dup_sheet_created(self, tmp_path):
+        findings = [_make_tp(1), _make_dup(2, duplicate_of=1)]
+        json_path = _write_json(tmp_path, findings=findings)
+        xlsx = convert(json_path)
+        wb = load_workbook(xlsx)
+        assert "Duplicates" in wb.sheetnames
+
+    def test_no_dup_sheet_when_none(self, tmp_path):
+        json_path = _write_json(tmp_path, findings=[_make_tp(1)])
+        xlsx = convert(json_path)
+        wb = load_workbook(xlsx)
+        assert "Duplicates" not in wb.sheetnames
+
+    def test_dup_sort_order(self):
+        """DUPs should sort between TPs and FPs."""
+        df = pd.DataFrame([
+            {"id": 1, "classification": "FALSE_POSITIVE", "severity": None},
+            {"id": 2, "classification": "DUPLICATE", "severity": "HIGH"},
+            {"id": 3, "classification": "TRUE_POSITIVE", "severity": "HIGH"},
+        ])
+        result = _sort_findings(df)
+        assert list(result["classification"]) == [
+            "TRUE_POSITIVE", "DUPLICATE", "FALSE_POSITIVE"
+        ]
+
+    def test_dup_in_all_findings(self, tmp_path):
+        findings = [_make_tp(1), _make_dup(2, duplicate_of=1), _make_fp(3)]
+        json_path = _write_json(tmp_path, findings=findings)
+        xlsx = convert(json_path)
+        df = pd.read_excel(xlsx, sheet_name="All Findings")
+        assert len(df) == 3
+        assert list(df["classification"]) == [
+            "TRUE_POSITIVE", "DUPLICATE", "FALSE_POSITIVE"
+        ]
+
+    def test_dup_has_duplicate_of_field(self, tmp_path):
+        findings = [_make_tp(1), _make_dup(2, duplicate_of=1)]
+        json_path = _write_json(tmp_path, findings=findings)
+        xlsx = convert(json_path)
+        df = pd.read_excel(xlsx, sheet_name="Duplicates")
+        assert df.iloc[0]["duplicate_of"] == 1
+
+
+# ── File naming ──────────────────────────────────────────────────────────────
+
+class TestFileNaming:
+    def test_xlsx_mirrors_json_name(self, tmp_path):
+        """When json is named repo_triage-results_72.json, xlsx should match."""
+        data = {
+            "meta": _make_meta(),
+            "findings": [_make_tp()],
+            "composite_vulnerabilities": [],
+        }
+        json_path = str(tmp_path / "myapp_triage-results_72.json")
+        with open(json_path, "w") as f:
+            json.dump(data, f)
+        xlsx = convert(json_path)
+        assert os.path.basename(xlsx) == "myapp_triage-results_72.xlsx"
+
+    def test_default_name_for_plain_json(self, tmp_path):
+        json_path = _write_json(tmp_path)  # writes triage-results.json
+        xlsx = convert(json_path)
+        assert os.path.basename(xlsx) == "triage-results.xlsx"
