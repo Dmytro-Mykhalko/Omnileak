@@ -2,17 +2,12 @@ import os
 import json
 import logging
 import copy
-import re
 import pandas as pd
 from openpyxl.styles import Font
 
+from .excel_utils import sanitize_for_excel
+
 logger = logging.getLogger(__name__)
-
-# Truncate abnormally large values that would break Excel (limit: 32 767 chars).
-EXCEL_SECRET_VALUE_LIMIT = 5000
-
-# Control characters that openpyxl rejects (XML-illegal in spreadsheets).
-_ILLEGAL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 COLUMNS = [
     "id", "repository", "file_path", "line_number",
@@ -43,29 +38,6 @@ def _build_commit_url(repo_url, commit_hash, file_path, line_number=""):
         url += f"#L{line_number}"
     return url
 
-
-def _sanitize_for_excel(df):
-    """Make a DataFrame safe for openpyxl.
-
-    1. Strip control characters that are illegal in XML/Excel.
-    2. Truncate secret_value when abnormally large (>5 000 chars).
-
-    Full values are always available in the JSON report.
-    """
-    df = df.copy()
-    # Strip illegal control characters from all string columns.
-    for col in df.select_dtypes(include=["object", "string"]).columns:
-        df[col] = df[col].apply(
-            lambda v: _ILLEGAL_CHARS_RE.sub("", v) if isinstance(v, str) else v
-        )
-    # Truncate oversized secret values.
-    if "secret_value" in df.columns:
-        df["secret_value"] = df["secret_value"].apply(
-            lambda v: v[:EXCEL_SECRET_VALUE_LIMIT] + " [truncated]"
-            if isinstance(v, str) and len(v) > EXCEL_SECRET_VALUE_LIMIT
-            else v
-        )
-    return df
 
 
 class Reporter:
@@ -164,7 +136,7 @@ class Reporter:
 
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
             # General tab — all deduplicated findings
-            _sanitize_for_excel(df_all).to_excel(writer, sheet_name="General", index=False)
+            sanitize_for_excel(df_all).to_excel(writer, sheet_name="General", index=False)
             self._add_commit_hyperlinks(writer.sheets["General"], commit_urls_all)
 
             # Per-tool tabs
@@ -176,7 +148,7 @@ class Reporter:
                 if not df_tool.empty:
                     df_tool = df_tool[COLUMNS]
                     sheet_name = str(tool).capitalize()[:31]
-                    _sanitize_for_excel(df_tool).to_excel(writer, sheet_name=sheet_name, index=False)
+                    sanitize_for_excel(df_tool).to_excel(writer, sheet_name=sheet_name, index=False)
                     self._add_commit_hyperlinks(writer.sheets[sheet_name], tool_urls)
 
             # Add auto-filters to every sheet
