@@ -21,7 +21,7 @@ import os
 import pandas as pd
 from openpyxl.styles import Font, PatternFill
 
-from core.excel_utils import sanitize_for_excel, SECRET_VALUE_LIMIT, add_commit_hyperlinks
+from core.excel_utils import sanitize_for_excel, add_commit_hyperlinks
 
 logger = logging.getLogger(__name__)
 

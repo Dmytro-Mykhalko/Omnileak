@@ -4,8 +4,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OMNILEAK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILL_SRC="$SCRIPT_DIR/scan-secrets.md"
+SKILL_SUB_DIR="$SCRIPT_DIR/scan-secrets"
 COMMANDS_DIR="$HOME/.claude/commands"
 SKILL_DST="$COMMANDS_DIR/scan-secrets.md"
+SKILL_SUB_DST="$COMMANDS_DIR/scan-secrets"
 SHELL_RC=""
 
 # Detect shell config file — check the user's login shell ($SHELL),
@@ -42,9 +44,15 @@ fi
 # 2. Create commands directory
 mkdir -p "$COMMANDS_DIR"
 
-# 3. Copy skill file
+# 3. Copy skill files (main + sub-directory)
 cp "$SKILL_SRC" "$SKILL_DST"
 echo "[+] Installed skill to $SKILL_DST"
+
+if [ -d "$SKILL_SUB_DIR" ]; then
+    mkdir -p "$SKILL_SUB_DST"
+    cp "$SKILL_SUB_DIR"/*.md "$SKILL_SUB_DST/"
+    echo "[+] Installed sub-files to $SKILL_SUB_DST/"
+fi
 
 # 4. Set OMNILEAK_HOME environment variable
 if [ -z "$SHELL_RC" ]; then
