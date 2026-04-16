@@ -15,30 +15,35 @@ Example (repo "my-app", risk score 72):
 ```json
 {
   "meta": {
-    "repo": "<repo_name>",
-    "repo_url": "<remote origin URL — resolve via git -C <repo_path> remote get-url origin; empty string if unavailable>",
-    "scan_date": "<ISO 8601 timestamp>",
-    "last_commit": "<latest commit — from <out-dir>/<repo>_latest_commit.txt>",
-    "mode": "full_scan | triage_only",
-    "risk_score": "<0-100>",
-    "total_raw_findings": "<number>",
-    "true_positives": "<number>",
-    "false_positives_filtered": "<number>",
-    "ai_only_findings": "<number>",
-    "deep_analysis_performed": "true | false"
+    "repo": "my-app",
+    "repo_url": "https://github.com/org/my-app",
+    "scan_date": "2026-04-16T10:00:00Z",
+    "last_commit": "abc1234",
+    "mode": "full_scan",
+    "risk_score": 72,
+    "total_raw_findings": 150,
+    "true_positives": 5,
+    "false_positives_filtered": 120,
+    "ai_only_findings": 1,
+    "deep_analysis_performed": true
   },
-  "findings": ["<see field rules below>"],
-  "composite_vulnerabilities": [
-    {
-      "id": 1,
-      "description": "...",
-      "severity": "CRITICAL",
-      "related_finding_ids": [1, 3],
-      "files_involved": ["file1", "file2"]
-    }
-  ]
+  "findings": [],
+  "composite_vulnerabilities": []
 }
 ```
+
+**Meta field types:**
+- `repo`: string — repository name
+- `repo_url`: string — remote origin URL (resolve via `git -C <repo_path> remote get-url origin`; `""` if unavailable)
+- `scan_date`: string — ISO 8601 timestamp
+- `last_commit`: string — from `<out-dir>/<repo>_latest_commit.txt`
+- `mode`: string — `"full_scan"` or `"triage_only"`
+- `risk_score`: integer — 0 to 100
+- `total_raw_findings`: integer
+- `true_positives`: integer
+- `false_positives_filtered`: integer
+- `ai_only_findings`: integer
+- `deep_analysis_performed`: boolean
 
 ## Finding Fields
 

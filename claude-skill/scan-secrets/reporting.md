@@ -1,6 +1,16 @@
 # Report Generation Instructions
 
-## Excel Report
+## 1. Validate Triage JSON
+
+Run the validator **first** to catch errors before generating reports:
+
+```bash
+cd <omnileak_path> && python3 -m core.ai.triage_validator <json_path> --raw <aggregated_json_path>
+```
+
+If validation fails, fix the JSON and re-validate. The validator checks: required fields, correct types, count consistency, risk score formula, and raw ID coverage.
+
+## 2. Excel Report
 
 Convert the triage JSON to Excel:
 
@@ -9,16 +19,6 @@ cd <omnileak_path> && python3 -m core.ai.triage_reporter <json_path>
 ```
 
 The `.xlsx` name is auto-derived from the `.json` name. Tabs: Summary, All Findings, True Positives, Duplicates, False Positives, Composite Vulns. If the script fails, report the error but continue.
-
-## Validate Triage JSON
-
-Run the validator to check integrity:
-
-```bash
-cd <omnileak_path> && python3 -m core.ai.triage_validator <json_path> --raw <aggregated_json_path>
-```
-
-If validation fails, fix the issues before proceeding. The validator checks: required fields, correct types, count consistency, risk score formula, and raw ID coverage.
 
 ## Markdown Report
 

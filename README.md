@@ -180,7 +180,7 @@ After (works): https://github.com/org/repo/commit/cb37fba...
 
 ## Claude Code Integration (AI Triage)
 
-Omnileak ships with a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill that wraps the scan pipeline with **AI-powered triage**. After the deterministic tools run, Claude reviews every finding, classifies true vs. false positives, performs deep analysis for composite vulnerabilities, and generates a prioritized remediation report.
+Omnileak ships with a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill that wraps the scan pipeline with **AI-powered triage**. After the deterministic tools run, a pre-filter removes obvious false positives, then Claude classifies the remaining findings, performs deep analysis for composite vulnerabilities, and generates structured reports.
 
 ### Install the skill
 
@@ -189,9 +189,10 @@ cd /path/to/Omnileak
 ./claude-skill/install.sh
 ```
 
-This does two things:
-1. Copies the skill file to `~/.claude/commands/scan-secrets.md` (where Claude Code discovers slash commands).
-2. Sets `OMNILEAK_HOME` in your shell profile so the skill can locate `main.py` from any directory.
+This does three things:
+1. Copies the orchestrator to `~/.claude/commands/scan-secrets.md`
+2. Copies sub-files (triage rules, deep analysis, JSON schema, reporting, agent prompt) to `~/.claude/commands/scan-secrets/`
+3. Sets `OMNILEAK_HOME` in your shell profile so the skill can locate Omnileak from any directory
 
 Supports **bash**, **zsh**, and **fish**. If your shell isn't detected, the script prints the manual export command.
 
@@ -200,44 +201,34 @@ Supports **bash**, **zsh**, and **fish**. If your shell isn't detected, the scri
 Open Claude Code in any git repository and run:
 
 ```
-/scan-secrets                                         # scan current repo
-/scan-secrets --repo ~/Projects/my-app                # scan a specific repo
-/scan-secrets --out /tmp/results                      # custom output directory
-/scan-secrets --repo ~/Projects/my-app --out /tmp/results   # both
+/scan-secrets                                                # scan current repo
+/scan-secrets --repo ~/Projects/my-app                       # scan a specific repo
+/scan-secrets --repo ~/Projects/my-app --out /tmp/results    # custom output
+/scan-secrets --results ./scanning/my-app                    # triage existing results
+/scan-secrets --results ./scanning --repo ~/Projects/my-app  # triage + deep analysis
 ```
-
-### Triage existing results
-
-Already ran Omnileak before? Point the skill at your existing output directory to skip the scan and go straight to AI triage:
-
-```
-/scan-secrets --results ./scanning/my-app
-/scan-secrets --results ./scanning/my-app --repo ~/Projects/my-app   # enables deep analysis
-```
-
-The skill auto-discovers `_aggregated_secrets.json` files in the directory. Add `--repo` to enable deep analysis (reading actual source files for composite vulnerabilities).
 
 ### What it does
 
-1. Runs Omnileak (all 4 tools) against the target repo — or reads existing results with `--results`
-2. AI triages every finding — true positive vs. false positive
-3. AI deep analysis — catches composite vulnerabilities, non-pattern secrets, and context-dependent severity (requires repo access)
-4. Writes a markdown report to `<output_dir>/secrets-triage-report.md` with:
-   - Executive summary and severity breakdown
-   - Verified findings table with remediation priority
-   - Composite vulnerabilities section
-   - False positive summary
+1. **Scan** — runs Omnileak (all 4 tools) or reads existing results with `--results`
+2. **Pre-filter** — deterministic FP removal (lock files, vendor code, minified JS) via `core.ai.prefilter`
+3. **AI triage** — classifies remaining findings as TRUE_POSITIVE / FALSE_POSITIVE / DUPLICATE
+4. **Deep analysis** — catches composite vulnerabilities, credential reuse across environments, Docker credential decoding (requires `--repo`)
+5. **Validation** — `core.ai.triage_validator` checks schema, counts, risk score, ID coverage
+6. **Reports** — structured JSON, color-coded Excel (via `core.ai.triage_reporter`), markdown summary with risk score and remediation priorities
+
+Output files follow `<repo>_<name>_<score>.<ext>` naming (e.g. `my-app_triage-results_72.json`).
+
+For multi-repo scans, repos are tiered by finding count (skip / lightweight / standard / large) and dispatched to parallel agents.
 
 ### Update the skill
 
-After pulling a new version of Omnileak, re-run the installer to update the skill:
+After pulling a new version of Omnileak, re-run the installer:
 
 ```bash
 cd /path/to/Omnileak
 ./claude-skill/install.sh
 ```
-
-The installer overwrites the previous skill file in `~/.claude/commands/`.
 
 ---
 

@@ -1,21 +1,6 @@
 # Triage Classification Rules
 
-## Deduplicate — Keep One, Mark the Rest
-
-Group findings that represent the **same logical secret** — the same credential value appearing in multiple commits, or detected by multiple tools in the same file.
-
-- Pick **one** representative finding per group → classify it as `TRUE_POSITIVE` or `FALSE_POSITIVE` normally. Track all original `id` values in its `omnileak_ids`.
-- For **every other** entry in the group, emit a separate finding with `"classification": "DUPLICATE"` and set `"duplicate_of": <id of the primary finding>`. Copy severity/environment/etc. from the primary. This ensures the total finding count in the JSON matches the raw Omnileak count — nothing is silently dropped.
-
-## Handle Large Result Sets
-
-If the aggregated JSON has **more than 200 findings**, work in batches:
-1. Read the first batch (up to 200 entries)
-2. Triage that batch
-3. Read the next batch, and so on
-4. Merge results at the end
-
-Do NOT try to read the entire file into a single prompt if it's very large.
+This file contains only classification rules — what is a TP, FP, severity, confidence. Process flow (dedup, batching) is in the agent prompt.
 
 ## TRUE POSITIVE — flag if:
 

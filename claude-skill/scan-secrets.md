@@ -43,11 +43,11 @@ This skill reads detailed instructions from `~/.claude/commands/scan-secrets/`:
 
 | File | Purpose | When loaded |
 |---|---|---|
-| `triage-rules.md` | TP/FP classification rules, severity matrix | Step 5 |
-| `deep-analysis.md` | Composite vulns, credential reuse, Docker base64 | Step 6 |
-| `json-schema.md` | Output JSON schema, field rules, risk score, naming | Step 7 |
-| `reporting.md` | Markdown report, Excel, validator, improvements | Steps 8-10 |
-| `agent-prompt.md` | Standardized prompt for sub-agents in multi-repo mode | Multi-repo dispatch |
+| `triage-rules.md` | TP/FP classification rules, severity matrix | Step 5a (triage) |
+| `deep-analysis.md` | Composite vulns, credential reuse, Docker base64 | Step 5b (deep analysis) |
+| `json-schema.md` | Output JSON schema, field rules, risk score, naming | Step 5c (JSON output) |
+| `reporting.md` | Validator, Excel, markdown report, improvements | Steps 5d-5e (reports) |
+| `agent-prompt.md` | Self-contained prompt for sub-agents | Multi-repo dispatch |
 
 ## Instructions
 
@@ -102,8 +102,10 @@ If no aggregated JSON found, tell the user and stop.
 
 **For each repo's aggregated JSON, run the deterministic pre-filter:**
 ```bash
-cd <omnileak_path> && python3 -m core.ai.prefilter <aggregated_json> --out <output_dir>/prefiltered.json
+cd <omnileak_path> && python3 -m core.ai.prefilter <aggregated_json> --out <repo_output_dir>/prefiltered.json
 ```
+
+Where `<repo_output_dir>` is the per-repo output directory (e.g. `<output_dir>/<repo_name>/`).
 
 This auto-classifies obvious FPs (lock files, vendor code, minified JS) without using AI. Note the summary counts.
 
@@ -111,23 +113,24 @@ This auto-classifies obvious FPs (lock files, vendor code, minified JS) without 
 
 #### Single-repo: inline triage
 
-For a single repo, proceed through Steps 5a-11 inline:
+For a single repo, proceed through Steps 5a-5f inline:
 
-**5a.** Read `~/.claude/commands/scan-secrets/triage-rules.md` → classify the `needs_triage` findings from the pre-filter output.
+**5a. Triage.** Read `~/.claude/commands/scan-secrets/triage-rules.md`. Deduplicate the `needs_triage` findings (group same secret across commits/tools → one primary + DUPLICATEs). Classify each as TP or FP. If more than 200 findings, work in batches of 200.
 
-**5b.** If repo path available, read `~/.claude/commands/scan-secrets/deep-analysis.md` → perform deep analysis.
+**5b. Deep analysis.** If repo path available, read `~/.claude/commands/scan-secrets/deep-analysis.md` → perform checks against actual source files.
 
-**5c.** Read `~/.claude/commands/scan-secrets/json-schema.md` → write the triage JSON with ALL findings (AI-classified + auto-FPs + duplicates).
+**5c. Write JSON.** Read `~/.claude/commands/scan-secrets/json-schema.md` → write the triage JSON with ALL findings (AI-classified TPs/FPs + auto-FPs from pre-filter + DUPs). Total count must match raw Omnileak count.
 
-**5d.** Validate and generate Excel:
+**5d. Validate + Excel.** Run validation first, then generate Excel:
 ```bash
 cd <omnileak_path> && python3 -m core.ai.triage_validator <json_path> --raw <aggregated_json>
 cd <omnileak_path> && python3 -m core.ai.triage_reporter <json_path>
 ```
+If validation fails, fix the JSON and re-validate.
 
-**5e.** Read `~/.claude/commands/scan-secrets/reporting.md` → write markdown report + pipeline improvements.
+**5e. Reports.** Read `~/.claude/commands/scan-secrets/reporting.md` → write markdown triage report + pipeline improvements.
 
-**5f.** Print summary: mode, risk score, TP/FP/DUP counts with severity breakdown, file paths.
+**5f. Summary.** Print: mode, risk score, TP/FP/DUP counts with severity breakdown, file paths.
 
 #### Multi-repo: tiered dispatch
 
