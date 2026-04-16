@@ -30,13 +30,6 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Tier thresholds (after pre-filter)
-_TIER_THRESHOLDS = [
-    (0, "skip"),
-    (20, "lightweight"),
-    (200, "standard"),
-]
-
 
 def _assign_tier(needs_triage_count):
     """Assign dispatch tier based on finding count after pre-filter."""

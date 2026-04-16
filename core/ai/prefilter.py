@@ -212,17 +212,21 @@ def prefilter_batch(root_dir):
     for input_path in matches:
         repo_dir = os.path.dirname(input_path)
         output_path = os.path.join(repo_dir, "prefiltered.json")
-        prefilter_file(input_path, output_path)
 
-        with open(output_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        # Run pre-filter and grab the result in memory (avoid re-reading).
+        with open(input_path, "r", encoding="utf-8") as f:
+            findings = json.load(f)
+        result = prefilter(findings)
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
 
         repo_name = os.path.basename(repo_dir)
         results.append({
             "repo": repo_name,
             "input": input_path,
             "output": output_path,
-            "summary": data["summary"],
+            "summary": result["summary"],
         })
         logger.info("Batch pre-filter: %s → %s", repo_name, output_path)
 

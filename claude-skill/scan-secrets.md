@@ -66,8 +66,26 @@ Execute this pipeline in strict order. Do NOT skip steps.
 
 Parse `$ARGUMENTS` for `--results`, `--repo`, `--out`, `--resume`, and `--retry`.
 
-- If `--resume` is provided → **Resume mode** (load manifest, recover stale repos, go to Step 5 multi-repo iterative loop).
-  - If `--retry` is also provided, reset the named repos to "pending" before continuing.
+- If `--resume` is provided → **Resume mode**:
+  1. Load the manifest: read the JSON file at the `--resume` path.
+  2. Recover stale repos (in_progress > 10 min back to pending):
+     ```bash
+     cd <omnileak_path> && python3 -c "
+     from core.ai.manifest import recover_stale
+     recovered = recover_stale('<manifest_path>')
+     print(f'Recovered {len(recovered)} stale repo(s): {recovered}')
+     "
+     ```
+  3. If `--retry` is also provided, reset each named repo to pending:
+     ```bash
+     cd <omnileak_path> && python3 -c "
+     from core.ai.manifest import update_repo
+     for name in '<repo1>,<repo2>'.split(','):
+         update_repo('<manifest_path>', name.strip(), status='pending', error=None)
+         print(f'Reset {name.strip()} to pending')
+     "
+     ```
+  4. Go to Step 5.1 (iterative loop) — skip Step 5.0 since the manifest already exists.
 - If `--results` is provided → **Triage mode** (skip Steps 2-3, go to Step 4).
 - Otherwise → **Full scan mode** (start at Step 2).
 
@@ -149,12 +167,11 @@ If validation fails, fix the JSON and re-validate.
 
 ##### Step 5.0: Create manifest
 
-Run the batch pre-filter (if not already done in Step 4) and create the manifest:
-```bash
-cd <omnileak_path> && python3 -m core.ai.prefilter --batch <output_directory>
-```
+**Skip this step if resuming** (manifest already exists).
 
-Read `~/.claude/commands/scan-secrets/manifest-schema.md` to understand the format. Create the manifest using:
+Step 4 already ran per-repo pre-filters. Do NOT re-run them. Build the manifest from the existing `prefiltered.json` files:
+
+Read `~/.claude/commands/scan-secrets/manifest-schema.md` to understand the format. Create the manifest:
 ```bash
 cd <omnileak_path> && python3 -c "
 from core.ai.prefilter import prefilter_batch
@@ -164,6 +181,8 @@ manifest = create_manifest(results, '<output_directory>')
 print(f'Created manifest: {manifest[\"path\"]} ({manifest[\"total_repos\"]} repos)')
 "
 ```
+
+Note: `prefilter_batch` is idempotent — if `prefiltered.json` files already exist from Step 4, this overwrites them with identical content. The main purpose here is to collect the summaries into a manifest.
 
 ##### Step 5.1: Iterative loop
 
