@@ -3,7 +3,11 @@ import os
 
 import pytest
 
-from core.ai.prefilter import prefilter, prefilter_file, prefilter_batch
+from core.ai.prefilter import (
+    prefilter, prefilter_file, prefilter_batch,
+    _shannon_entropy, _check_known_prefix, _classify_sensitivity,
+    _try_decode_docker_auth,
+)
 
 
 def _finding(file_path="src/app.py", id_="f1"):
@@ -169,6 +173,224 @@ class TestContentRules:
         f["secret_value"] = "sha256-abc123"
         result = prefilter([f])
         assert result["auto_fp"][0]["fp_category"] == "vendor_code"
+
+
+class TestKnownPrefixes:
+    def test_aws_key_overrides_vendor_fp(self):
+        """AKIA prefix in vendor/ should NOT be auto-FP'd."""
+        f = _finding("vendor/lib/config.py")
+        f["secret_value"] = "AKIAIOSFODNN7EXAMPLE"
+        result = prefilter([f])
+        assert len(result["needs_triage"]) == 1
+        assert len(result["auto_fp"]) == 0
+        assert result["needs_triage"][0]["tp_hint"] == "known_prefix:aws_access_key"
+
+    def test_github_pat_overrides_node_modules(self):
+        f = _finding("node_modules/pkg/.env")
+        f["secret_value"] = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef12"
+        result = prefilter([f])
+        assert len(result["needs_triage"]) == 1
+        assert "github_pat" in result["needs_triage"][0]["tp_hint"]
+
+    def test_slack_bot_token(self):
+        f = _finding("config/app.yml")
+        f["secret_value"] = "xoxb-FAKE000000000-FAKE000000000-FakeTestValueXx"
+        result = prefilter([f])
+        assert result["needs_triage"][0]["tp_hint"] == "known_prefix:slack_bot_token"
+
+    def test_stripe_secret_live(self):
+        f = _finding("config/payment.py")
+        f["secret_value"] = "sk_live_FAKE00TEST"
+        result = prefilter([f])
+        assert "stripe_secret_live" in result["needs_triage"][0]["tp_hint"]
+
+    def test_private_key_header(self):
+        f = _finding("deploy/key.pem")
+        f["secret_value"] = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQ..."
+        result = prefilter([f])
+        assert "rsa_private_key" in result["needs_triage"][0]["tp_hint"]
+
+    def test_npm_token(self):
+        f = _finding(".npmrc")
+        f["secret_value"] = "npm_abcdefghijklmnop1234567890ABCDEF"
+        result = prefilter([f])
+        assert "npm_token" in result["needs_triage"][0]["tp_hint"]
+
+    def test_sentry_token(self):
+        f = _finding("config/sentry.yml")
+        f["secret_value"] = "sntrys_eyJpYXQiOjE2OTg2NTY..."
+        result = prefilter([f])
+        assert "sentry_token" in result["needs_triage"][0]["tp_hint"]
+
+    def test_payment_secret_key(self):
+        f = _finding("db/dump.sql")
+        f["secret_value"] = "api_sk_12345abcdef67890"
+        result = prefilter([f])
+        assert "payment_secret_key" in result["needs_triage"][0]["tp_hint"]
+
+    def test_non_matching_prefix_no_hint(self):
+        f = _finding("src/app.py")
+        f["secret_value"] = "some_random_value_not_a_known_prefix"
+        result = prefilter([f])
+        assert result["needs_triage"][0]["tp_hint"] is None
+
+    def test_tp_hint_count_in_summary(self):
+        findings = [
+            _finding("src/a.py", "f1"),
+            _finding("src/b.py", "f2"),
+        ]
+        findings[0]["secret_value"] = "AKIAIOSFODNN7EXAMPLE"
+        findings[1]["secret_value"] = "just_a_normal_value"
+        result = prefilter(findings)
+        assert result["summary"]["tp_hints"] == 1
+
+    def test_google_api_key(self):
+        f = _finding("src/firebase.js")
+        f["secret_value"] = "AIzaSyA1B2C3D4E5F6G7H8I9J0KlMnOpQrStUv"
+        result = prefilter([f])
+        assert "google_api_key" in result["needs_triage"][0]["tp_hint"]
+
+
+class TestEnrichment:
+    def test_entropy_computed(self):
+        f = _finding("src/app.py")
+        f["secret_value"] = "Xy9kL2mN4pQ7rT0wBcDfGhJv"
+        result = prefilter([f])
+        finding = result["needs_triage"][0]
+        assert "entropy" in finding
+        assert finding["entropy"] > 3.0
+
+    def test_high_entropy_flag(self):
+        f = _finding("src/app.py")
+        f["secret_value"] = "aB3$xZ9#kL7!mN2@pQ5&rT8*"  # high entropy, 24 chars
+        result = prefilter([f])
+        assert result["needs_triage"][0]["high_entropy"] is True
+
+    def test_low_entropy_not_flagged(self):
+        f = _finding("src/app.py")
+        f["secret_value"] = "password_password_password"
+        result = prefilter([f])
+        assert result["needs_triage"][0]["high_entropy"] is False
+
+    def test_short_string_not_high_entropy(self):
+        """Even high-entropy strings under 20 chars are not flagged."""
+        f = _finding("src/app.py")
+        f["secret_value"] = "aB3$xZ9#kL7!"  # 13 chars
+        result = prefilter([f])
+        assert result["needs_triage"][0]["high_entropy"] is False
+
+    def test_sensitivity_production(self):
+        f = _finding("values_prod/rabbitmq.yaml")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "production"
+
+    def test_sensitivity_infrastructure(self):
+        f = _finding("helm/charts/app/values.yaml")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "infrastructure"
+
+    def test_sensitivity_deploy(self):
+        f = _finding("deploy/docker-compose.prod.yml")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "infrastructure"
+
+    def test_sensitivity_test(self):
+        f = _finding("test/config/fixtures.py")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "test"
+
+    def test_sensitivity_none_for_normal_path(self):
+        f = _finding("src/app.py")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] is None
+
+    def test_sensitivity_staging(self):
+        f = _finding("values_stage/db.yaml")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "staging"
+
+    def test_sensitivity_env_file(self):
+        f = _finding(".env")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "config"
+
+    def test_sensitivity_counts_in_summary(self):
+        findings = [
+            _finding("values_prod/a.yaml", "f1"),
+            _finding("values_prod/b.yaml", "f2"),
+            _finding("test/c.py", "f3"),
+            _finding("src/d.py", "f4"),
+        ]
+        result = prefilter(findings)
+        sc = result["summary"]["sensitivity_counts"]
+        assert sc.get("production") == 2
+        assert sc.get("test") == 1
+
+    def test_high_entropy_count_in_summary(self):
+        findings = [
+            _finding("src/a.py", "f1"),
+            _finding("src/b.py", "f2"),
+        ]
+        findings[0]["secret_value"] = "Xy9kL2mN4pQ7rT0wBcDfGhJv"  # high entropy, 24 chars
+        findings[1]["secret_value"] = "password"  # low entropy
+        result = prefilter(findings)
+        assert result["summary"]["high_entropy"] == 1
+
+
+class TestDockerDecode:
+    def test_decodes_dockerconfigjson(self):
+        import base64
+        inner_auth = base64.b64encode(b"myuser:mypass123").decode()
+        docker_json = json.dumps({"auths": {"registry.example.com": {"auth": inner_auth}}})
+        blob = base64.b64encode(docker_json.encode()).decode()
+
+        f = _finding("templates/secrets/docker.yaml")
+        f["secret_value"] = blob
+        f["secret_type"] = "kubernetes-secret-yaml-dockerconfigjson"
+        result = prefilter([f])
+        finding = result["needs_triage"][0]
+        assert "decoded_docker_creds" in finding
+        assert "myuser:mypass123" in finding["decoded_docker_creds"]
+
+    def test_no_decode_for_non_docker(self):
+        f = _finding("src/app.py")
+        f["secret_value"] = "just_a_regular_secret"
+        result = prefilter([f])
+        assert "decoded_docker_creds" not in result["needs_triage"][0]
+
+
+class TestHelpers:
+    def test_shannon_entropy_zero_for_empty(self):
+        assert _shannon_entropy("") == 0.0
+
+    def test_shannon_entropy_zero_for_single_char(self):
+        assert _shannon_entropy("aaaa") == 0.0
+
+    def test_shannon_entropy_high_for_random(self):
+        assert _shannon_entropy("aB3$xZ9#kL7!mN2@pQ5&rT8*") > 4.0
+
+    def test_check_known_prefix_aws(self):
+        assert _check_known_prefix("AKIAIOSFODNN7EXAMPLE") == "aws_access_key"
+
+    def test_check_known_prefix_none(self):
+        assert _check_known_prefix("not_a_known_prefix") is None
+
+    def test_classify_sensitivity_prod(self):
+        assert _classify_sensitivity("values_prod/db.yaml") == "production"
+
+    def test_classify_sensitivity_none(self):
+        assert _classify_sensitivity("src/app.py") is None
+
+    def test_try_decode_docker_auth_valid(self):
+        import base64
+        inner = base64.b64encode(b"user:pass").decode()
+        blob = json.dumps({"auths": {"reg.io": {"auth": inner}}})
+        encoded = base64.b64encode(blob.encode()).decode()
+        result = _try_decode_docker_auth(encoded)
+        assert result == ["user:pass"]
+
+    def test_try_decode_docker_auth_invalid(self):
+        assert _try_decode_docker_auth("not_base64_at_all") is None
 
 
 class TestPrefilterFile:

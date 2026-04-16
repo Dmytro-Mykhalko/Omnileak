@@ -45,6 +45,12 @@ Examples:
 - All output stays local on disk.
 - Before starting, ask the user **once**: "This will run the full pipeline without further confirmations. Proceed?" If yes, do NOT ask for any more confirmations for the rest of the pipeline.
 
+## Critical Guardrails
+
+- **NEVER delegate classification to a batch script.** Do not write Python scripts to `/tmp/` or anywhere else that classify findings in bulk. Every finding must be analyzed inline by the agent reading the actual value and file context. The only scripts that should run are Omnileak's built-in tools (`prefilter`, `triage_validator`, `triage_reporter`, `triage_writer`, `manifest`).
+- **NEVER classify by secret_type alone.** The scanner's `secret_type` field (e.g. "Secret Keyword", "generic-api-key") is a detection rule name, not a verdict. You MUST examine the actual `secret_value` to decide TP vs FP. A "Secret Keyword" finding with value `password: "Xy9kL2mN4pQ7rT0wBcDfGhJv"` is a TP; one with value `password_field: password` is an FP.
+- **Read source files during classification, not after.** When a repo path is available, verify each finding by reading the actual file. This is part of classification, not a separate "deep analysis" afterthought.
+
 ## Sub-files
 
 This skill reads detailed instructions from `~/.claude/commands/scan-secrets/`:
@@ -144,9 +150,15 @@ This auto-classifies obvious FPs (lock files, vendor code, minified JS) without 
 
 For a single repo, proceed through Steps 5a-5f inline:
 
-**5a. Triage.** Read `~/.claude/commands/scan-secrets/triage-rules.md`. Deduplicate the `needs_triage` findings (group same secret across commits/tools → one primary + DUPLICATEs). Classify each as TP or FP. If more than 200 findings, work in batches of 200.
+**5a. Classify with source verification.** Read `~/.claude/commands/scan-secrets/triage-rules.md`. Deduplicate the `needs_triage` findings (group same secret across commits/tools → one primary + DUPLICATEs). For each finding:
+1. **Read the pre-filter enrichment** — check `tp_hint`, `high_entropy`, `sensitivity`, `decoded_docker_creds` fields. These guide your classification but don't decide it.
+2. **Examine the actual secret_value** — not just the secret_type. High-entropy strings (entropy >= 4.0, length >= 20) in infrastructure/production files are almost always real.
+3. **If repo path available**: read the source file to verify the value in context, check on_disk status, determine environment from the actual file structure.
+4. Classify as TP or FP based on the value, not the type name.
 
-**5b. Deep analysis.** If repo path available, read `~/.claude/commands/scan-secrets/deep-analysis.md` → perform checks against actual source files.
+If more than 200 findings, work in batches of 200.
+
+**5b. Cross-file deep analysis.** If repo path available, read `~/.claude/commands/scan-secrets/deep-analysis.md` → check for composite vulnerabilities, credential reuse across environments, Docker base64 decoding (use `decoded_docker_creds` if the pre-filter already decoded it), and secrets in files tools typically miss (.sql dumps, .dist files, CI workflows).
 
 **5c. Write JSON.** Read `~/.claude/commands/scan-secrets/json-schema.md` → write the triage JSON with ALL findings (AI-classified TPs/FPs + auto-FPs from pre-filter + DUPs). Total count must match raw Omnileak count.
 
@@ -214,17 +226,23 @@ Read this repo's `prefiltered.json`. Note `needs_triage` count.
 
 If `needs_triage` is 0: write a triage JSON with ALL raw findings as `FALSE_POSITIVE` (using auto-FP categories from the pre-filter). Every finding must have `fp_reason` starting with `"Auto-filtered: "`. These must appear in the Excel. Set risk_score=0. Skip to step (h).
 
-**d. Classify findings**
+**d. Classify findings with source verification**
 
 Print status: `[<completed+1>/<total>] <repo_name> — classifying findings...`
 
-Deduplicate `needs_triage` findings (group same secret across commits/tools → one primary + DUPLICATEs). Classify each as TP or FP using the rules read in step 5.1. If more than 200 findings, work in batches of 200.
+Deduplicate `needs_triage` findings (group same secret across commits/tools → one primary + DUPLICATEs). For each finding:
+1. **Read the pre-filter enrichment** — check `tp_hint`, `high_entropy`, `sensitivity`, `decoded_docker_creds` fields. These guide your classification but don't decide it.
+2. **Examine the actual secret_value** — not just the secret_type. High-entropy strings (entropy >= 4.0, length >= 20) in infrastructure/production files are almost always real.
+3. **If repo path available**: read the source file to verify the value in context, check on_disk status, determine environment from the actual file structure.
+4. Classify as TP or FP based on the value, not the type name.
 
-**e. Deep analysis**
+If more than 200 findings, work in batches of 200.
+
+**e. Cross-file deep analysis**
 
 Print status: `[<completed+1>/<total>] <repo_name> — deep analysis...`
 
-If repo path is available, read `~/.claude/commands/scan-secrets/deep-analysis.md` and perform checks against actual source files.
+If repo path is available, read `~/.claude/commands/scan-secrets/deep-analysis.md` and check for composite vulnerabilities, credential reuse across environments, Docker base64 decoding, and secrets in files tools typically miss (.sql dumps, .dist files, CI workflows).
 
 **f. Write triage JSON**
 
