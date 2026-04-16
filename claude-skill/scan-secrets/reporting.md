@@ -20,6 +20,8 @@ cd <omnileak_path> && python3 -m core.ai.triage_reporter <json_path>
 
 The `.xlsx` name is auto-derived from the `.json` name. Tabs: Summary, All Findings, True Positives, Duplicates, False Positives, Composite Vulns. If the script fails, report the error but continue.
 
+**All findings including pre-filter auto-FPs must appear in Excel.** The "All Findings" sheet shows every raw Omnileak finding. Auto-FPs appear with `fp_reason` set to `"Auto-filtered: <category>"` (e.g., `"Auto-filtered: lock_file"`). They also appear in the False Positives sheet. No finding should be invisible in the final deliverable.
+
 ## Markdown Report
 
 Write `<output_directory>/<repo_name>_secrets-triage-report_<risk_score>.md`:

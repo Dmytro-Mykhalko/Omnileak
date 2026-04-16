@@ -31,6 +31,8 @@ def _valid_triage(findings=None, composites=None, meta_overrides=None):
     tp_count = sum(1 for f in findings if f["classification"] == "TRUE_POSITIVE")
     fp_count = sum(1 for f in findings if f["classification"] == "FALSE_POSITIVE")
 
+    dup_count = sum(1 for f in findings if f["classification"] == "DUPLICATE")
+
     meta = {
         "repo": "test-repo",
         "scan_date": "2026-04-16T00:00:00Z",
@@ -39,6 +41,7 @@ def _valid_triage(findings=None, composites=None, meta_overrides=None):
         "total_raw_findings": 1,
         "true_positives": tp_count,
         "false_positives_filtered": fp_count,
+        "duplicates": dup_count,
     }
     if meta_overrides:
         meta.update(meta_overrides)
@@ -50,7 +53,12 @@ def _valid_triage(findings=None, composites=None, meta_overrides=None):
     }
 
 
-def _write(tmp_path, data, name="triage.json"):
+def _write(tmp_path, data, name=None):
+    if name is None:
+        # Default to a name that matches the validator's file naming check
+        repo = data.get("meta", {}).get("repo", "test-repo")
+        score = data.get("meta", {}).get("risk_score", 0)
+        name = f"{repo}_triage-results_{score}.json"
     path = str(tmp_path / name)
     with open(path, "w") as f:
         json.dump(data, f)
@@ -114,6 +122,7 @@ class TestValidStructure:
         }
         data = _valid_triage(findings=[fp], meta_overrides={
             "risk_score": 0, "true_positives": 0, "false_positives_filtered": 1,
+            "duplicates": 0,
         })
         path = _write(tmp_path, data)
         errors = validate(path)
@@ -151,7 +160,7 @@ class TestIdCoverage:
     def test_all_ids_covered(self, tmp_path):
         raw = [{"id": "r1", "file_path": "f", "secret_value": "x"}]
         data = _valid_triage()
-        triage_path = _write(tmp_path, data, "triage.json")
+        triage_path = _write(tmp_path, data)
         raw_path = _write(tmp_path, raw, "raw.json")
         errors = validate(triage_path, raw_path=raw_path)
         assert errors == []
@@ -181,7 +190,8 @@ class TestIdCoverage:
                 "file_path": "f", "line_number": 1, "commit": "a",
                 "on_disk": True, "detected_by": ["gitleaks"],
             },
-        ], meta_overrides={"risk_score": 5, "true_positives": 1, "false_positives_filtered": 0})
+        ], meta_overrides={"risk_score": 5, "true_positives": 1, "false_positives_filtered": 0,
+                           "duplicates": 1, "total_raw_findings": 2})
         raw = [{"id": "r1"}]
         triage_path = _write(tmp_path, data, "triage.json")
         raw_path = _write(tmp_path, raw, "raw.json")
@@ -201,6 +211,72 @@ class TestEdgeCases:
     def test_empty_findings(self, tmp_path):
         data = _valid_triage(findings=[], meta_overrides={
             "risk_score": 0, "true_positives": 0, "false_positives_filtered": 0,
+            "duplicates": 0, "total_raw_findings": 0,
         })
         path = _write(tmp_path, data)
         assert validate(path) == []
+
+
+class TestTotalCoverage:
+    def test_coverage_gap_flagged(self, tmp_path):
+        data = _valid_triage(meta_overrides={"total_raw_findings": 100})
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert any("total coverage gap" in e for e in errors)
+
+    def test_more_findings_than_raw_is_ok(self, tmp_path):
+        """Extra findings (e.g. AI-only) are acceptable."""
+        data = _valid_triage(meta_overrides={"total_raw_findings": 0})
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert not any("total coverage gap" in e for e in errors)
+
+
+class TestSequentialIds:
+    def test_valid_sequential_passes(self, tmp_path):
+        data = _valid_triage()  # default finding has id=1
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert not any("sequential" in e for e in errors)
+
+    def test_non_sequential_flagged(self, tmp_path):
+        data = _valid_triage()
+        data["findings"][0]["id"] = 5  # should be 1
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert any("sequential" in e for e in errors)
+
+    def test_string_id_flagged(self, tmp_path):
+        data = _valid_triage()
+        data["findings"][0]["id"] = "TP-001"
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert any("integer" in e for e in errors)
+
+
+class TestDuplicateCount:
+    def test_matching_dup_count_passes(self, tmp_path):
+        data = _valid_triage(meta_overrides={"duplicates": 0})
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert not any("meta.duplicates" in e for e in errors)
+
+    def test_mismatched_dup_count_flagged(self, tmp_path):
+        data = _valid_triage(meta_overrides={"duplicates": 5})
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert any("meta.duplicates" in e for e in errors)
+
+
+class TestFileNaming:
+    def test_correct_naming_passes(self, tmp_path):
+        data = _valid_triage()
+        path = _write(tmp_path, data)  # auto-generates correct name
+        errors = validate(path)
+        assert not any("file naming" in e for e in errors)
+
+    def test_wrong_naming_flagged(self, tmp_path):
+        data = _valid_triage()
+        path = _write(tmp_path, data, "wrong_name.json")
+        errors = validate(path)
+        assert any("file naming" in e for e in errors)

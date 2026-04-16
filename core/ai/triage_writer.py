@@ -175,6 +175,7 @@ def assemble(
 
     tp_count = sum(1 for f in all_findings if f["classification"] == "TRUE_POSITIVE")
     fp_count = sum(1 for f in all_findings if f["classification"] == "FALSE_POSITIVE")
+    dup_count = sum(1 for f in all_findings if f["classification"] == "DUPLICATE")
     ai_only = sum(1 for f in all_findings
                   if f["classification"] == "TRUE_POSITIVE" and f.get("detected_by") == ["AI"])
 
@@ -189,6 +190,7 @@ def assemble(
             "total_raw_findings": len(raw_findings),
             "true_positives": tp_count,
             "false_positives_filtered": fp_count,
+            "duplicates": dup_count,
             "ai_only_findings": ai_only,
             "deep_analysis_performed": bool(composites),
         },

@@ -36,6 +36,7 @@ _REQUIRED_META_FIELDS = {
     "total_raw_findings": (int, float),
     "true_positives": (int, float),
     "false_positives_filtered": (int, float),
+    "duplicates": (int, float),
 }
 
 _REQUIRED_FINDING_FIELDS = {
@@ -141,6 +142,63 @@ def _check_id_coverage(data, raw_findings, errors):
         )
 
 
+def _check_total_coverage(data, errors):
+    """Check that finding count >= total_raw_findings (no silent data loss)."""
+    meta = data.get("meta", {})
+    total_raw = meta.get("total_raw_findings")
+    findings = data.get("findings", [])
+    if total_raw is not None and len(findings) < total_raw:
+        errors.append(
+            f"total coverage gap: {len(findings)} findings in output "
+            f"but total_raw_findings={total_raw}"
+        )
+
+
+def _check_sequential_ids(data, errors):
+    """Check that finding IDs are sequential integers starting at 1."""
+    findings = data.get("findings", [])
+    for i, finding in enumerate(findings):
+        fid = finding.get("id")
+        expected = i + 1
+        if not isinstance(fid, int):
+            errors.append(
+                f"finding[{i}]: id must be an integer, got {type(fid).__name__} '{fid}'"
+            )
+        elif fid != expected:
+            errors.append(
+                f"finding[{i}]: id={fid}, expected sequential id={expected}"
+            )
+
+
+def _check_duplicate_count(data, errors):
+    """Check that meta.duplicates matches actual DUPLICATE count in findings."""
+    meta = data.get("meta", {})
+    reported_dups = meta.get("duplicates")
+    if reported_dups is None:
+        return
+    actual_dups = sum(1 for f in data.get("findings", [])
+                      if f.get("classification") == "DUPLICATE")
+    if reported_dups != actual_dups:
+        errors.append(
+            f"count mismatch: meta.duplicates={reported_dups} "
+            f"but found {actual_dups} DUPs"
+        )
+
+
+def _check_file_naming(triage_path, data, errors):
+    """Check that filename matches <repo>_triage-results_<score>.json."""
+    basename = os.path.basename(triage_path)
+    meta = data.get("meta", {})
+    repo = meta.get("repo", "")
+    score = meta.get("risk_score")
+    if repo and score is not None:
+        expected = f"{repo}_triage-results_{score}.json"
+        if basename != expected:
+            errors.append(
+                f"file naming: expected '{expected}', got '{basename}'"
+            )
+
+
 def validate(triage_path, raw_path=None):
     """Validate a triage-results.json file.
 
@@ -166,6 +224,7 @@ def validate(triage_path, raw_path=None):
         return [f"cannot read triage JSON: {e}"]
 
     _check_meta(data.get("meta", {}), errors)
+    _check_file_naming(triage_path, data, errors)
 
     findings = data.get("findings", [])
     if not isinstance(findings, list):
@@ -174,7 +233,10 @@ def validate(triage_path, raw_path=None):
         for i, finding in enumerate(findings):
             _check_finding(finding, i, errors)
         _check_counts(data, errors)
+        _check_duplicate_count(data, errors)
         _check_risk_score(data, errors)
+        _check_sequential_ids(data, errors)
+        _check_total_coverage(data, errors)
 
     if raw_path:
         try:

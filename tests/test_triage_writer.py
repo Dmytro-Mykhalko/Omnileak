@@ -136,6 +136,21 @@ class TestAssemble:
         assert data["findings"] == []
         assert data["meta"]["risk_score"] == 0
 
+    def test_duplicates_in_meta(self, tmp_path):
+        raw = [_raw_finding("r1"), _raw_finding("r2")]
+        cls = _classifications([{
+            "omnileak_ids": ["r1"],
+            "classification": "TRUE_POSITIVE",
+            "severity": "MEDIUM",
+            "category": "key",
+        }])
+        raw_path, cls_path, _ = _write_files(tmp_path, raw, cls)
+
+        path = assemble(raw_path, cls_path, "repo", str(tmp_path / "out"))
+        with open(path) as f:
+            data = json.load(f)
+        assert data["meta"]["duplicates"] == 1  # r2 becomes a DUPLICATE
+
     def test_meta_fields_present(self, tmp_path):
         raw = [_raw_finding("r1")]
         cls = _classifications([{

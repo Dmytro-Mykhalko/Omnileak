@@ -17,6 +17,11 @@ $ARGUMENTS — optional named flags:
 - `--repo <path>` — (optional) path to the git repository. Enables deep analysis. If omitted, deep analysis is skipped.
 - `--out <path>` — where to write the triage report. Defaults to the `--results` directory.
 
+### Mode 3: Resume / Retry
+
+- `--resume <manifest.json>` — resume an interrupted multi-repo triage from the manifest. Recovers stale repos (in_progress > 10 min) back to pending, then continues from the first pending repo.
+- `--retry <repo1,repo2>` — retry specific failed repos from an existing manifest. Requires `--resume` to specify the manifest path.
+
 All flags are optional and can be combined in any order.
 
 Examples:
@@ -28,6 +33,9 @@ Examples:
 /scan-secrets --results ./scanning/my-app              # triage existing single-repo results
 /scan-secrets --results ./scanning                     # triage existing multi-repo results
 /scan-secrets --results ./scanning/my-app --repo ~/Projects/my-app   # triage + deep analysis
+
+/scan-secrets --resume ./scanning/manifest.json        # resume interrupted multi-repo triage
+/scan-secrets --resume ./scanning/manifest.json --retry repo-a,repo-b  # retry specific repos
 ```
 
 ## Safety
@@ -47,7 +55,8 @@ This skill reads detailed instructions from `~/.claude/commands/scan-secrets/`:
 | `deep-analysis.md` | Composite vulns, credential reuse, Docker base64 | Step 5b (deep analysis) |
 | `json-schema.md` | Output JSON schema, field rules, risk score, naming | Step 5c (JSON output) |
 | `reporting.md` | Validator, Excel, markdown report, improvements | Steps 5d-5e (reports) |
-| `agent-prompt.md` | Self-contained prompt for sub-agents | Multi-repo dispatch |
+| `manifest-schema.md` | Manifest format for resumable multi-repo | Multi-repo dispatch |
+| `agent-prompt.md` | Self-contained prompt for sub-agents (legacy, see iterative loop) | Reference only |
 
 ## Instructions
 
@@ -55,8 +64,10 @@ Execute this pipeline in strict order. Do NOT skip steps.
 
 ### Step 1: Determine Mode
 
-Parse `$ARGUMENTS` for `--results`, `--repo`, and `--out`.
+Parse `$ARGUMENTS` for `--results`, `--repo`, `--out`, `--resume`, and `--retry`.
 
+- If `--resume` is provided → **Resume mode** (load manifest, recover stale repos, go to Step 5 multi-repo iterative loop).
+  - If `--retry` is also provided, reset the named repos to "pending" before continuing.
 - If `--results` is provided → **Triage mode** (skip Steps 2-3, go to Step 4).
 - Otherwise → **Full scan mode** (start at Step 2).
 
@@ -132,25 +143,122 @@ If validation fails, fix the JSON and re-validate.
 
 **5f. Summary.** Print: mode, risk score, TP/FP/DUP counts with severity breakdown, file paths.
 
-#### Multi-repo: tiered dispatch
+#### Multi-repo: iterative loop with manifest
 
-Classify each repo after pre-filtering:
+**One agent processes repos sequentially, one at a time.** No parallel sub-agent dispatch. This keeps classification rules in fresh context and enables resumption.
 
-| Tier | Condition | Strategy |
-|---|---|---|
-| **Skip** | 0 findings after pre-filter | Generate template output inline (risk=0, all FP) — no agent |
-| **Lightweight** | 1-20 findings | Spawn agent with `agent-prompt.md` |
-| **Standard** | 21-200 findings | Spawn agent with `agent-prompt.md` |
-| **Large** | 200+ findings | Spawn agent with `agent-prompt.md` + batch instructions |
+##### Step 5.0: Create manifest
 
-**For Skip tier:** Write a minimal triage JSON with all findings as auto-FP, risk_score=0. Run Excel generation. No deep analysis needed.
+Run the batch pre-filter (if not already done in Step 4) and create the manifest:
+```bash
+cd <omnileak_path> && python3 -m core.ai.prefilter --batch <output_directory>
+```
 
-**For all other tiers:** Read `~/.claude/commands/scan-secrets/agent-prompt.md`. For each repo, replace the `{{placeholders}}` with actual values and spawn an agent. Run agents in parallel when possible.
+Read `~/.claude/commands/scan-secrets/manifest-schema.md` to understand the format. Create the manifest using:
+```bash
+cd <omnileak_path> && python3 -c "
+from core.ai.prefilter import prefilter_batch
+from core.ai.manifest import create_manifest
+results = prefilter_batch('<output_directory>')
+manifest = create_manifest(results, '<output_directory>')
+print(f'Created manifest: {manifest[\"path\"]} ({manifest[\"total_repos\"]} repos)')
+"
+```
 
-**After all agents complete, run post-processing for each repo:**
+##### Step 5.1: Iterative loop
+
+**FOR each repo in the manifest (priority order), while next_pending returns a repo:**
+
+At the **start of EVERY iteration**, re-read these files to keep rules in fresh context:
+1. Read `~/.claude/commands/scan-secrets/triage-rules.md`
+2. Read `~/.claude/commands/scan-secrets/json-schema.md`
+
+Then execute these sub-steps:
+
+**a. Update manifest → in_progress**
+```bash
+cd <omnileak_path> && python3 -c "
+from core.ai.manifest import update_repo
+from datetime import datetime, timezone
+update_repo('<manifest_path>', '<repo_name>', status='in_progress',
+            started_at=datetime.now(timezone.utc).isoformat())
+"
+```
+
+Print status: `[<completed+1>/<total>] <repo_name> — reading pre-filtered findings (<N> to triage)...`
+
+**b. Read pre-filtered findings**
+
+Read this repo's `prefiltered.json`. Note `needs_triage` count.
+
+**c. Skip-tier handling**
+
+If `needs_triage` is 0: write a triage JSON with ALL raw findings as `FALSE_POSITIVE` (using auto-FP categories from the pre-filter). Every finding must have `fp_reason` starting with `"Auto-filtered: "`. These must appear in the Excel. Set risk_score=0. Skip to step (h).
+
+**d. Classify findings**
+
+Print status: `[<completed+1>/<total>] <repo_name> — classifying findings...`
+
+Deduplicate `needs_triage` findings (group same secret across commits/tools → one primary + DUPLICATEs). Classify each as TP or FP using the rules read in step 5.1. If more than 200 findings, work in batches of 200.
+
+**e. Deep analysis**
+
+Print status: `[<completed+1>/<total>] <repo_name> — deep analysis...`
+
+If repo path is available, read `~/.claude/commands/scan-secrets/deep-analysis.md` and perform checks against actual source files.
+
+**f. Write triage JSON**
+
+Print status: `[<completed+1>/<total>] <repo_name> — writing triage JSON...`
+
+Write the complete triage JSON with ALL findings: AI-classified TPs/FPs + auto-FPs from pre-filter + DUPs. Total count must equal raw Omnileak count.
+
+**g. Validate (HARD GATE)**
+
+Print status: `[<completed+1>/<total>] <repo_name> — validating...`
+
 ```bash
 cd <omnileak_path> && python3 -m core.ai.triage_validator <json_path> --raw <aggregated_json>
+```
+
+- If validation **passes** → continue to step (h).
+- If validation **fails** → fix the JSON → re-validate (max 2 retries).
+- If still failing after 2 retries → update manifest status to `"failed"` with the error message → move to next repo. **Never skip validation. Never continue on failure without marking it.**
+
+**h. Excel + markdown reports**
+
+Print status: `[<completed+1>/<total>] <repo_name> — generating Excel + reports...`
+
+```bash
 cd <omnileak_path> && python3 -m core.ai.triage_reporter <json_path>
 ```
 
-**Print batch summary:** total repos, per-tier breakdown, aggregate risk, paths.
+Read `~/.claude/commands/scan-secrets/reporting.md` → write markdown triage report + pipeline improvements.
+
+**i. Update manifest → done**
+
+```bash
+cd <omnileak_path> && python3 -c "
+from core.ai.manifest import update_repo
+from datetime import datetime, timezone
+update_repo('<manifest_path>', '<repo_name>', status='done',
+            risk_score=<score>, tps=<n>, fps=<n>, dups=<n>,
+            validated=True, triage_json='<json_path>',
+            duration_s=<elapsed>, completed_at=datetime.now(timezone.utc).isoformat())
+"
+```
+
+**j. Print progress line**
+
+After completing a repo, print:
+```
+[<completed>/<total>] <repo_name> | risk=<score> | TP=<n> FP=<n> DUP=<n> | validated=<bool> | <duration>s
+```
+
+##### Step 5.2: Batch summary
+
+After the loop completes, print:
+- Total repos processed, completed, failed
+- Per-tier breakdown
+- Aggregate risk across all repos
+- Paths to manifest and output files
