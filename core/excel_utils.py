@@ -9,6 +9,7 @@ import re
 
 import pandas as pd
 from openpyxl.styles import Font
+from openpyxl.worksheet.hyperlink import Hyperlink
 
 # Control characters that are illegal in XML / Excel cells.
 ILLEGAL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -99,5 +100,7 @@ def add_commit_hyperlinks(ws, repo_url, commit_data):
         url = build_commit_url(repo_url, commit, fp, ln)
         if url:
             cell = ws.cell(row=row_idx, column=commit_col)
-            cell.hyperlink = url
+            link = Hyperlink(ref=cell.coordinate, target=url)
+            cell._hyperlink = link
+            ws._hyperlinks.append(link)
             cell.font = link_font

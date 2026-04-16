@@ -6,6 +6,7 @@ import pandas as pd
 from openpyxl.styles import Font
 
 from .excel_utils import sanitize_for_excel, build_commit_url, add_commit_hyperlinks
+from openpyxl.worksheet.hyperlink import Hyperlink
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,9 @@ class Reporter:
                 )
                 if url:
                     cell = ws.cell(row=row_idx, column=commit_col)
-                    cell.hyperlink = url
+                    link = Hyperlink(ref=cell.coordinate, target=url)
+                    cell._hyperlink = link
+                    ws._hyperlinks.append(link)
                     cell.font = link_font
 
     def generate_excel(self, data):
