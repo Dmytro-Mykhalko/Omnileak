@@ -158,11 +158,6 @@ For a single repo, proceed through Steps 5a-5f inline:
 
 If more than 200 findings, work in batches of 200.
 
-**5a-verify. FP/DUP verification pass.** After initial classification, review every finding you marked as FALSE_POSITIVE or DUPLICATE:
-- For each FP: re-read the `secret_value`. Is it high-entropy (>20 chars, random-looking)? If yes and you cannot prove it's a placeholder → flip to TP.
-- For each FP in a `.php`, `.py`, `.rb`, `.yml`, `.yaml`, `.env`, `.sql`, `.pem`, `.key` file: re-read the file context if repo path is available. Does it look like real config/credentials? If yes → flip to TP.
-- For each DUP: verify the `secret_value` is character-for-character identical to the primary's. If the values differ → make it a separate TP or FP, not a DUP.
-
 **5b. Cross-file deep analysis.** If repo path available, read `~/.claude/commands/scan-secrets/deep-analysis.md` → check for composite vulnerabilities, credential reuse across environments, Docker base64 decoding (use `decoded_docker_creds` if the pre-filter already decoded it), and secrets in files tools typically miss (.sql dumps, .dist files, CI workflows).
 
 **5c. Write JSON.** Read `~/.claude/commands/scan-secrets/json-schema.md` → write the triage JSON with ALL findings (AI-classified TPs/FPs + auto-FPs from pre-filter + DUPs). Total count must match raw Omnileak count.
@@ -242,15 +237,6 @@ Deduplicate `needs_triage` findings (group same secret across commits/tools → 
 4. Classify as TP or FP based on the value, not the type name.
 
 If more than 200 findings, work in batches of 200.
-
-**d-verify. FP/DUP verification pass**
-
-Print status: `[<completed+1>/<total>] <repo_name> — verifying FP/DUP classifications...`
-
-Review every finding classified as FALSE_POSITIVE or DUPLICATE:
-- For each FP: re-read the `secret_value`. Is it high-entropy (>20 chars, random-looking)? If yes and you cannot prove it's a placeholder → flip to TP.
-- For each FP in a `.php`, `.py`, `.rb`, `.yml`, `.yaml`, `.env`, `.sql`, `.pem`, `.key` file: re-read the file context if repo path is available. Does it look like real config/credentials? If yes → flip to TP.
-- For each DUP: verify the `secret_value` is character-for-character identical to the primary's. If the values differ → make it a separate TP or FP, not a DUP.
 
 **e. Cross-file deep analysis**
 

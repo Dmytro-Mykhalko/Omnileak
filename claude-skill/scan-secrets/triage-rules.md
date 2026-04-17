@@ -24,16 +24,23 @@ The pre-filter adds hints to each finding in `needs_triage`. **Use these but don
 | `sensitivity` | File-path label: `production`, `staging`, `infrastructure`, `config`, `test` | Determines severity. Production + real credential = CRITICAL. |
 | `decoded_docker_creds` | Decoded Docker registry credentials from base64 blob | Always TP — these are real registry credentials. Report the decoded value. |
 
-## Classification Approach — Value First, Type Never
+## Classification Approach — TP by Default, FP Only with Proof
 
 **NEVER classify by `secret_type` alone.** The scanner's secret_type (e.g. "Secret Keyword", "generic-api-key", "np.generic.5") is a detection rule name, NOT a verdict. You MUST examine the actual `secret_value`.
 
-For each finding:
+**Start by assuming the finding is a TRUE POSITIVE.** Then try to disprove it:
+
 1. Extract the credential value from the raw `secret_value` string
-2. Check against known credential prefixes (see below)
-3. Assess the value — is it high-entropy? Is it a placeholder? Is it a code pattern?
-4. Check the file context — what kind of file is this? What environment?
-5. Only then decide TP or FP
+2. Check against known credential prefixes → if match, it's TP (stop here)
+3. Check `high_entropy` flag → if true, it's TP unless you can prove it's fake (stop here)
+4. Check `sensitivity` tag → if `production`, `infrastructure`, or `certificate`, it's TP unless the value is clearly a placeholder (stop here)
+5. Check the file extension → if `.pem`, `.key`, `.p12`, `.env`, `.sql`, it's TP unless the value is clearly a placeholder
+6. Try to find **positive evidence** that the value is fake:
+   - Is it a known placeholder? (`password`, `changeme`, `example`, `123456`, `xxx`, `TODO`)
+   - Is it a variable name or code pattern? (`password_field`, `secretName`, `const KEY = 'key'`)
+   - Is it a translation string? (`Jelszó`, `Пароль`, `mot de passe`)
+   - Is it a schema definition or type name? (`SecretKey: string`, `type: password`)
+7. If you found positive evidence → FP. If you didn't → **TP**
 
 ## Known Credential Prefixes — Force TP
 
@@ -64,23 +71,20 @@ If `secret_value` starts with any of these, it is **almost certainly a TRUE POSI
 - Kubernetes Docker registry secrets (`.dockerconfigjson` base64 blobs) — always TP, decode and report
 - `erlangCookie`, RabbitMQ passwords, AMQP connection strings with non-default passwords
 
-## FALSE POSITIVE — discard if:
+## FALSE POSITIVE — discard ONLY with positive proof
 
-- In `vendor/`, `node_modules/`, or third-party library code **AND** the value is NOT a known credential prefix:
-  - Translation files (`password => 'Jelszó'`, `password => 'Пароль'`)
-  - SDK/API schema definitions (`SecretKey`, `SecretArn`, `SecretToken` as parameter names)
-  - Third-party test fixtures (`password => '123456'`)
-  - Bundled frontend JS (`public/bundles/`)
-- Code pattern, not a credential:
-  - `password_parameter: password` (form field name)
-  - `const PRIVATE_KEY = 'privateKey'` (string constant, not an actual key)
-  - `$password = 'password'` in test files (mock value)
-- Comment or documentation example (`# db_user:db_password@localhost`)
-- YAML/JSON key name containing "secret"/"password" but with no real value attached
-- GitHub Actions section headers (`secrets: |`) or vault path names (`SECRET_NAME: app-name`)
-- Helm chart `existingSecret: <name>` references where the value is a simple resource name (no high-entropy string)
-- Regex patterns or type definitions containing the word "secret"
-- Connection strings where password is a **known default**: `root`, `admin`, `guest`, `password`, `pass`, `changeme`, `!ChangeMe!`, `db_password`, `secret`, `example` AND hostname is `localhost`, `127.0.0.1`, or `0.0.0.0`
+**You may ONLY classify as FP if one of these specific conditions is met AND the value is NOT high-entropy AND the value does NOT match a known credential prefix:**
+
+1. **Vendor translation string**: value is a human-language word for "password"/"secret" in a translation file inside `vendor/`, `node_modules/` (e.g. `password => 'Jelszó'`, `password => 'Пароль'`)
+2. **SDK schema/type definition**: the match is a parameter name or type, not a value (e.g. `SecretKey: string`, `type SecretToken struct{}`)
+3. **Variable/field name, not a value**: the detected string is a code identifier (e.g. `password_parameter: password`, `const PRIVATE_KEY = 'privateKey'`, `secret_name`)
+4. **Known placeholder value**: the value is literally one of: `password`, `changeme`, `!ChangeMe!`, `example`, `123456`, `xxx`, `TODO`, `REPLACE_ME`, `db_password`, `secret`, `admin`, `root`, `guest`, `pass`, `test`
+5. **Regex or type definition**: the match is inside a regex pattern or type annotation containing "secret"/"password"
+6. **Helm secret reference**: `existingSecret: <simple-name>` where the value is a Kubernetes resource name, not a credential
+7. **GitHub Actions header**: `secrets: |` or vault path like `SECRET_NAME: app-name` (no actual credential value)
+8. **Connection string with default password AND localhost**: password matches the placeholder list above AND hostname is `localhost`/`127.0.0.1`/`0.0.0.0`
+
+**If NONE of the above conditions are met → classify as TP.** Do not invent new FP reasons. When the value is high-entropy and you can't match it to a specific FP condition above, it is TP.
 
 ## Infrastructure File Sensitivity
 
@@ -120,20 +124,23 @@ A DUPLICATE means the **exact same credential value** appearing in a different l
 
 When grouping for dedup: group by **normalized secret value**, NOT by secret_type or file_path.
 
-## Dangerous FP Patterns — Do NOT Make These Mistakes
+## Dangerous FP Patterns — These Are Mistakes, Not Rules
 
-These are patterns where the AI commonly misclassifies TPs as FPs. Check each one:
+These are real mistakes observed in production triage runs. Each one led to missed credentials. Do NOT repeat them:
 
 | Mistake | Why it's wrong | Correct classification |
 |---|---|---|
-| "test" in filename → FP | Files like `page-test_temp.php`, `test_config.yml` often contain real credentials used in test environments | Read the actual value. High-entropy string = TP. |
-| Private key file → FP | `privkey4.pem`, `server.key` are real keys, not patterns | Always TP. The file IS the secret. |
-| "Generic pattern match" → FP | Scanner's rule name doesn't determine reality | Read the value. `password: "Kx9mB2vL..."` is real regardless of rule name. |
-| Same secret_type → DUP | Two AWS keys are not duplicates just because both are AWS keys | Compare actual values. Different value = separate finding. |
-| History-only → FP | Secret removed from HEAD but still in git history | Still TP. Git history is recoverable. Needs rotation. |
-| `.php` file → FP | PHP files are application code, not test fixtures | Read the value. Credentials in PHP config files are real. |
-| Commented-out secret → FP | `// password: "realpass123"` still exposes the credential | TP if the value is real. Comments are readable. |
-| `.sql` file → FP | SQL dumps contain production data | TP if credential-like values in INSERT/UPDATE statements. |
+| "test" in filename → FP | `page-test_temp.php`, `test_config.yml` contain real credentials for test environments | TP if value is high-entropy. "test" in path ≠ fake credential. |
+| Private key / cert file → FP | `privkey4.pem`, `server.key`, `fullchain.pem` ARE the secrets | Always TP. The file is the credential. Severity CRITICAL. |
+| "Generic pattern match" → FP | Scanner rule name is irrelevant | TP if value is high-entropy. Read the value, ignore the type. |
+| Same secret_type → DUP | Two AWS keys are not duplicates because both are AWS keys | Different value = separate finding. Compare character-by-character. |
+| Different file, same type → DUP | Key in `config/prod.yml` ≠ key in `config/stage.yml` | Different file + different value = two TPs. |
+| History-only → FP | Secret deleted from HEAD but recoverable via `git log` | TP. Still needs rotation. Mark `on_disk: false`. |
+| `.php` / `.py` / `.rb` → FP | Application code files contain real hardcoded credentials | TP if value is high-entropy. These are not test fixtures. |
+| Commented-out secret → FP | `// password: "Kx9mB2vL..."` is visible to anyone reading the code | TP. Comments don't hide credentials from attackers. |
+| `.sql` file → FP | SQL dumps from production contain real credential columns | TP if `INSERT INTO` with credential-like columns. |
+| High-entropy in unfamiliar file → FP | Unknown file type doesn't mean not sensitive | TP. If you can't prove it's fake, it's real. |
+| `_temp` / `_backup` / `_old` suffix → FP | Temp/backup files often contain production data | TP. These are copies of real configs. |
 
 ## Connection String Rules
 
@@ -152,15 +159,16 @@ SQL files (`.sql`) — especially those with `prod` or `dump` in the path — ma
 - `INSERT INTO` statements with credential columns (`credential_private_key`, `webhook_private_key`, `api_key`)
 - These are **real credentials from production databases** → always TP, severity CRITICAL
 
-## Tool-Specific FP Patterns
+## Tool-Specific Notes
 
-Be extra skeptical of:
-- **Trufflehog**: high-entropy strings in minified JS, base64-encoded non-secrets, hex color codes
-- **Detect-secrets**: keyword-only matches (`password_field`, `secret_name`) with no actual value
-- **Gitleaks**: generic regex hits on words like `key`, `token` in comments or docs
-- **Titus**: wide-net rules that match config scaffolding or template placeholders
+These tools have known noise patterns, but **noise from a tool does not mean all findings from that tool are FP**. Always read the value:
 
-But **NEVER auto-FP an entire secret_type category**. Even "Secret Keyword" findings can be real: `password: "Xy9kL2mN4pQ7rT0wBcDfGhJv"` in `values_prod/rabbitmq.yaml` is CRITICAL.
+- **Trufflehog**: produces noise on high-entropy strings in minified JS and hex color codes — but also catches real secrets other tools miss. Read the value.
+- **Detect-secrets**: keyword-only matches (`password_field`, `secret_name`) with no actual value are FP — but `password: "Kx9mB2vL..."` from detect-secrets is TP. Check if there's a real value attached.
+- **Gitleaks**: generic regex hits on words like `key`, `token` in comments are noise — but gitleaks also catches real API keys in comments. Read the value.
+- **Titus**: wide-net rules match scaffolding — but also catch secrets in unusual file types. Read the value.
+
+**Bottom line**: the tool name and rule name are irrelevant. The value and file context determine TP vs FP.
 
 ## Confidence Levels
 
@@ -189,7 +197,11 @@ grep -F "<secret_value_snippet>" <repo_path>/<file_path>
 | Production      | CRITICAL      | CRITICAL    | CRITICAL | HIGH           | CRITICAL      |
 | Staging         | HIGH          | HIGH        | MEDIUM   | MEDIUM         | HIGH          |
 | Local/Dev       | MEDIUM        | MEDIUM      | LOW      | LOW            | MEDIUM        |
-| Test fixture    | LOW           | LOW         | FP       | FP             | LOW           |
+| Test env        | LOW           | MEDIUM      | LOW      | LOW            | LOW           |
 | Vendor code     | FP            | FP          | FP       | FP             | FP            |
 
-Determine environment from context: file path (`docker/`, `.env.local`, `test/`), the `sensitivity` tag from pre-filter, env branching in code (`if getenv('APP_ENV')`), variable names (`PROD_`, `STAGING_`), config structure. **When ambiguous, assume the higher severity.**
+**"Test env" means a confirmed test fixture** with placeholder values (`password: "123456"`), NOT any file with "test" in the path. Files like `test_config.yml` with real high-entropy credentials are production/staging severity, not test.
+
+**"Vendor code" means third-party library code** in `vendor/`, `node_modules/`, `bower_components/`. Your own project code in any directory is NOT vendor code.
+
+Determine environment from context: file path, the `sensitivity` tag from pre-filter, env branching in code (`if getenv('APP_ENV')`), variable names (`PROD_`, `STAGING_`), config structure. **When ambiguous, assume the higher severity.**
