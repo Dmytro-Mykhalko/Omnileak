@@ -40,18 +40,40 @@ def sanitize_for_excel(df):
     return df
 
 
+def _normalize_repo_url(repo_url):
+    """Convert SSH or HTTPS git URLs to a browsable HTTPS base URL.
+
+    Examples::
+
+        git@github.com:org/repo.git  ->  https://github.com/org/repo
+        https://github.com/org/repo.git  ->  https://github.com/org/repo
+        https://github.com/org/repo  ->  https://github.com/org/repo
+    """
+    url = repo_url.strip()
+    # SSH format: git@host:org/repo.git
+    m = re.match(r"^git@([^:]+):(.+?)(?:\.git)?$", url)
+    if m:
+        return f"https://{m.group(1)}/{m.group(2)}"
+    # HTTPS with .git suffix
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url
+
+
 def build_commit_url(repo_url, commit_hash, file_path, line_number=""):
     """Build a browser URL pointing to a specific file at a given commit.
 
-    Supports GitHub and GitLab URL patterns.  Returns an empty string
-    when there is not enough information to construct a valid link.
+    Supports GitHub and GitLab URL patterns.  Automatically normalizes
+    SSH URLs (``git@host:org/repo.git``) to HTTPS.  Returns an empty
+    string when there is not enough information to construct a valid link.
     """
     if not repo_url or not commit_hash:
         return ""
-    if "gitlab" in repo_url.lower():
-        url = f"{repo_url}/-/blob/{commit_hash}/{file_path}"
+    base = _normalize_repo_url(repo_url)
+    if "gitlab" in base.lower():
+        url = f"{base}/-/blob/{commit_hash}/{file_path}"
     else:
-        url = f"{repo_url}/blob/{commit_hash}/{file_path}"
+        url = f"{base}/blob/{commit_hash}/{file_path}"
     if line_number:
         url += f"#L{line_number}"
     return url
