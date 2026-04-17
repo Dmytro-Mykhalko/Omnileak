@@ -8,7 +8,6 @@ Example (repo "my-app", risk score 72):
 - `my-app_triage-results_72.json`
 - `my-app_triage-results_72.xlsx`
 - `my-app_secrets-triage-report_72.md`
-- `my-app_pipeline-improvements_72.md`
 
 ## JSON Structure
 

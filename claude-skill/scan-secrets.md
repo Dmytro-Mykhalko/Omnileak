@@ -60,7 +60,7 @@ This skill reads detailed instructions from `~/.claude/commands/scan-secrets/`:
 | `triage-rules.md` | TP/FP classification rules, severity matrix | Step 5a (triage) |
 | `deep-analysis.md` | Composite vulns, credential reuse, Docker base64 | Step 5b (deep analysis) |
 | `json-schema.md` | Output JSON schema, field rules, risk score, naming | Step 5c (JSON output) |
-| `reporting.md` | Validator, Excel, markdown report, improvements | Steps 5d-5e (reports) |
+| `reporting.md` | Validator, Excel, markdown report, batch improvements | Steps 5d-5e / 5.2 |
 | `manifest-schema.md` | Manifest format for resumable multi-repo | Multi-repo dispatch |
 | `agent-prompt.md` | Self-contained prompt for sub-agents (legacy, see iterative loop) | Reference only |
 
@@ -169,7 +169,7 @@ cd <omnileak_path> && python3 -m core.ai.triage_reporter <json_path>
 ```
 If validation fails, fix the JSON and re-validate.
 
-**5e. Reports.** Read `~/.claude/commands/scan-secrets/reporting.md` → write markdown triage report + pipeline improvements.
+**5e. Reports.** Read `~/.claude/commands/scan-secrets/reporting.md` → write the per-repo markdown triage report and one pipeline improvements report.
 
 **5f. Summary.** Print: mode, risk score, TP/FP/DUP counts with severity breakdown, file paths.
 
@@ -270,7 +270,7 @@ Print status: `[<completed+1>/<total>] <repo_name> — generating Excel + report
 cd <omnileak_path> && python3 -m core.ai.triage_reporter <json_path>
 ```
 
-Read `~/.claude/commands/scan-secrets/reporting.md` → write markdown triage report + pipeline improvements.
+Read `~/.claude/commands/scan-secrets/reporting.md` → write the per-repo markdown triage report. Do NOT write per-repo pipeline improvements — that is done once at the end.
 
 **i. Update manifest → done**
 
@@ -292,10 +292,14 @@ After completing a repo, print:
 [<completed>/<total>] <repo_name> | risk=<score> | TP=<n> FP=<n> DUP=<n> | validated=<bool> | <duration>s
 ```
 
-##### Step 5.2: Batch summary
+##### Step 5.2: Pipeline improvements (once for entire scan)
 
-After the loop completes, print:
+After the loop completes, read `~/.claude/commands/scan-secrets/reporting.md` and write **one** `<output_directory>/pipeline-improvements.md` covering all repos. Aggregate patterns — do not repeat per-repo observations.
+
+##### Step 5.3: Batch summary
+
+Print:
 - Total repos processed, completed, failed
 - Per-tier breakdown
 - Aggregate risk across all repos
-- Paths to manifest and output files
+- Paths to manifest, improvements report, and output files

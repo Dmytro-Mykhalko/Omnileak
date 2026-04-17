@@ -18,9 +18,9 @@ Convert the triage JSON to Excel:
 cd <omnileak_path> && python3 -m core.ai.triage_reporter <json_path>
 ```
 
-The `.xlsx` name is auto-derived from the `.json` name. Tabs: Summary, All Findings, True Positives, Duplicates, False Positives, Composite Vulns. If the script fails, report the error but continue.
+The `.xlsx` name is auto-derived from the `.json` name. Tabs: Summary, All Findings. If the script fails, report the error but continue.
 
-**All findings including pre-filter auto-FPs must appear in Excel.** The "All Findings" sheet shows every raw Omnileak finding. Auto-FPs appear with `fp_reason` set to `"Auto-filtered: <category>"` (e.g., `"Auto-filtered: lock_file"`). They also appear in the False Positives sheet. No finding should be invisible in the final deliverable.
+**All findings including pre-filter auto-FPs must appear in Excel.** The "All Findings" sheet shows every raw Omnileak finding. Auto-FPs appear with `fp_reason` set to `"Auto-filtered: <category>"` (e.g., `"Auto-filtered: lock_file"`). No finding should be invisible in the final deliverable.
 
 ## Markdown Report
 
@@ -48,21 +48,21 @@ Group by priority with effort estimates: `[quick]`, `[medium]`, `[complex]`.
 - **Priority 2 — Rotate Soon**: staging credentials, private keys, auth tokens
 - **Priority 3 — Clean Up**: .gitignore updates, git history purge, pre-commit hooks
 
-## Pipeline Improvements Report
+## Pipeline Improvements Report (once per scan, not per repo)
 
-Write `<output_directory>/<repo_name>_pipeline-improvements_<risk_score>.md`:
+Write **one** improvements report for the entire scan at `<output_directory>/pipeline-improvements.md`. Do NOT write per-repo improvement reports.
 
 ### Section 1: What Went Well
-Tool effectiveness, FP rule coverage, severity rubric accuracy.
+Tool effectiveness, FP rule coverage, severity rubric accuracy across all repos.
 
 ### Section 2: False Positive Patterns Discovered
-New FP patterns not in current rules. Include: pattern, example, proposed rule.
+New FP patterns not in current rules. Include: pattern, example, proposed rule. Aggregate across all repos — group similar patterns.
 
 ### Section 3: Triage Gaps
-Low-confidence findings, ambiguous environments, inconclusive on-disk checks.
+Low-confidence findings, ambiguous environments, inconclusive on-disk checks. Highlight only patterns that recurred across multiple repos.
 
 ### Section 4: Tool Coverage Analysis
-Tool overlap, unique catches, blind spots.
+Tool overlap, unique catches, blind spots. Use aggregate stats from all repos.
 
 ### Section 5: Suggested Improvements
 Concrete suggestions with: **What**, **Why**, **Priority** (high/medium/low).

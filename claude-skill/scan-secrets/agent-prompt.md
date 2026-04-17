@@ -70,11 +70,12 @@ cd {{omnileak_path}} && python3 -m core.ai.triage_reporter <json_path>
 
 If validation fails, fix the JSON and re-validate.
 
-### 6. Generate markdown reports
+### 6. Generate markdown triage report
 
 Read `~/.claude/commands/scan-secrets/reporting.md` and generate:
 - Markdown triage report (`{{repo_name}}_secrets-triage-report_<score>.md`)
-- Pipeline improvements report (`{{repo_name}}_pipeline-improvements_<score>.md`)
+
+Do NOT generate per-repo pipeline improvements — that is done once at the end of the full scan.
 
 ### 7. Print summary
 
