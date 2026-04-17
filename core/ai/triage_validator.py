@@ -25,6 +25,7 @@ from core.ai.constants import (
     VALID_SEVERITIES,
     compute_risk_score,
 )
+from core.ai.triage_writer import ASSEMBLED_BY
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,30 @@ def _check_duplicate_count(data, errors):
         )
 
 
+def _check_assembled_by(data, errors):
+    """Require that the triage JSON was produced by triage_writer.
+
+    meta.assembled_by is stamped automatically by core.ai.triage_writer.assemble().
+    A missing or wrong value means the JSON was hand-crafted or produced by an
+    unauthorized batch script (e.g. /tmp/triage_*.py) — which bypasses the
+    pipeline's guarantees around ID coverage, field population, and risk score.
+    """
+    meta = data.get("meta", {})
+    stamp = meta.get("assembled_by")
+    if stamp != ASSEMBLED_BY:
+        if stamp is None:
+            errors.append(
+                f"meta.assembled_by is missing. Expected '{ASSEMBLED_BY}'. "
+                "Triage JSON must be produced by `python3 -m core.ai.triage_writer` — "
+                "hand-crafted or /tmp/-scripted outputs are not accepted."
+            )
+        else:
+            errors.append(
+                f"meta.assembled_by='{stamp}', expected '{ASSEMBLED_BY}'. "
+                "Only triage_writer output is accepted."
+            )
+
+
 def _check_file_naming(triage_path, data, errors):
     """Check that filename matches <repo>_triage-results_<score>.json."""
     basename = os.path.basename(triage_path)
@@ -224,6 +249,7 @@ def validate(triage_path, raw_path=None):
         return [f"cannot read triage JSON: {e}"]
 
     _check_meta(data.get("meta", {}), errors)
+    _check_assembled_by(data, errors)
     _check_file_naming(triage_path, data, errors)
 
     findings = data.get("findings", [])

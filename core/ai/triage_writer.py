@@ -37,6 +37,8 @@ from core.ai.constants import compute_risk_score
 
 logger = logging.getLogger(__name__)
 
+ASSEMBLED_BY = "triage_writer/v1"
+
 
 def _build_raw_index(raw_findings):
     """Index raw findings by their ID for fast lookup."""
@@ -193,6 +195,7 @@ def assemble(
             "duplicates": dup_count,
             "ai_only_findings": ai_only,
             "deep_analysis_performed": bool(composites),
+            "assembled_by": ASSEMBLED_BY,
         },
         "findings": all_findings,
         "composite_vulnerabilities": composites,

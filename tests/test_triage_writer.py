@@ -70,6 +70,7 @@ class TestAssemble:
             data = json.load(f)
         assert data["meta"]["repo"] == "test-repo"
         assert data["meta"]["true_positives"] == 1
+        assert data["meta"]["assembled_by"] == "triage_writer/v1"
         assert len(data["findings"]) == 1
         assert data["findings"][0]["classification"] == "TRUE_POSITIVE"
 

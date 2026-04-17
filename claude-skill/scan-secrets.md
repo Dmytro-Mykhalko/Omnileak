@@ -47,7 +47,9 @@ Examples:
 
 ## Critical Guardrails
 
-- **NEVER delegate classification to a batch script.** Do not write Python scripts to `/tmp/` or anywhere else that classify findings in bulk. Every finding must be analyzed inline by the agent reading the actual value and file context. The only scripts that should run are Omnileak's built-in tools (`prefilter`, `triage_validator`, `triage_reporter`, `triage_writer`, `manifest`).
+- **NEVER delegate classification to a batch script.** Do not write Python (or any) scripts to `/tmp/`, the repo, or the output directory that classify findings in bulk. Every finding's verdict must come from reading the actual `secret_value` and source file — not from substring patterns in a script. The ONLY scripts allowed to run are Omnileak's built-in tools: `core.ai.prefilter`, `core.ai.triage_writer`, `core.ai.triage_validator`, `core.ai.triage_reporter`, `core.ai.manifest`. Short inline `python3 -c "..."` / heredocs that *inspect* data (counts, filters for display) are fine; anything producing classifications is not.
+- **Volume is not an excuse.** Hundreds of `needs_triage` findings feel tedious, but they are not a reason to write a classifier. Work through inline batches of 200. A substring-rule script misses the TP-bias and per-file context this pipeline depends on — the output will look structurally correct and be substantively wrong.
+- **Final JSON is assembled by `triage_writer`, not hand-written.** The agent emits a compact `classifications.json` (verdicts only) and calls `python3 -m core.ai.triage_writer`. The writer stamps `meta.assembled_by="triage_writer/v1"`; the validator rejects anything without it.
 - **NEVER classify by secret_type alone.** The scanner's `secret_type` field (e.g. "Secret Keyword", "generic-api-key") is a detection rule name, not a verdict. You MUST examine the actual `secret_value` to decide TP vs FP. A "Secret Keyword" finding with value `password: "Xy9kL2mN4pQ7rT0wBcDfGhJv"` is a TP; one with value `password_field: password` is an FP.
 - **Read source files during classification, not after.** When a repo path is available, verify each finding by reading the actual file. This is part of classification, not a separate "deep analysis" afterthought.
 
@@ -160,7 +162,20 @@ If more than 200 findings, work in batches of 200.
 
 **5b. Cross-file deep analysis.** If repo path available, read `~/.claude/commands/scan-secrets/deep-analysis.md` → check for composite vulnerabilities, credential reuse across environments, Docker base64 decoding (use `decoded_docker_creds` if the pre-filter already decoded it), and secrets in files tools typically miss (.sql dumps, .dist files, CI workflows).
 
-**5c. Write JSON.** Read `~/.claude/commands/scan-secrets/json-schema.md` → write the triage JSON with ALL findings (AI-classified TPs/FPs + auto-FPs from pre-filter + DUPs). Total count must match raw Omnileak count.
+**5c. Emit compact classifications, then assemble with triage_writer.** Do NOT hand-write the full triage-results JSON. Write a small `<repo_output_dir>/classifications.json` with your verdicts only (schema in `json-schema.md` under "Compact classifications"), then run:
+
+```bash
+cd <omnileak_path> && python3 -m core.ai.triage_writer \
+  --raw <aggregated_json> \
+  --classifications <repo_output_dir>/classifications.json \
+  --prefilter <repo_output_dir>/prefiltered.json \
+  --repo <repo_name> \
+  --repo-url <repo_url> \
+  --last-commit <commit_hash> \
+  --out <repo_output_dir>
+```
+
+This assembles `<repo_name>_triage-results_<risk_score>.json` with auto-FPs merged in, risk score computed, and `meta.assembled_by` stamped. Capture `<risk_score>` from the filename for Step 5d/5e.
 
 **5d. Validate + Excel.** Run validation first, then generate Excel:
 ```bash
@@ -217,7 +232,21 @@ If `ALL_DONE` → go to Step 5.2.
 
 **b. Skip-tier handling**
 
-If `needs_triage` is 0 (skip tier): handle inline — write a triage JSON with ALL raw findings as `FALSE_POSITIVE` (auto-FP categories from pre-filter), run Excel generation, update manifest to done, print progress line. Do NOT spawn an agent for skip-tier repos.
+If `needs_triage` is 0 (skip tier): handle inline — do NOT spawn an agent and do NOT hand-write the JSON. Assemble via `triage_writer` with an empty classifications file; the writer pulls every auto-FP from the pre-filter:
+
+```bash
+echo '{"findings": [], "composite_vulnerabilities": []}' > <repo_output_dir>/classifications.json
+cd <omnileak_path> && python3 -m core.ai.triage_writer \
+  --raw <aggregated_json> \
+  --classifications <repo_output_dir>/classifications.json \
+  --prefilter <repo_output_dir>/prefiltered.json \
+  --repo <repo_name> \
+  --repo-url <repo_url> \
+  --last-commit <commit_hash> \
+  --out <repo_output_dir>
+```
+
+Then run `core.ai.triage_validator` and `core.ai.triage_reporter` on the output, update the manifest to `done`, print the progress line.
 
 **c. Spawn sub-agent**
 

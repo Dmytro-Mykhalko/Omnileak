@@ -9,7 +9,11 @@ Example (repo "my-app", risk score 72):
 - `my-app_triage-results_72.xlsx`
 - `my-app_secrets-triage-report_72.md`
 
-## JSON Structure
+## How the JSON is produced
+
+**You do not hand-write this file.** Emit a compact `classifications.json` (schema below) and run `python3 -m core.ai.triage_writer` — it assembles the final triage-results JSON, fills defaults from raw data, computes `risk_score`, and stamps `meta.assembled_by`. The validator rejects any triage JSON whose `meta.assembled_by` is not `"triage_writer/v1"`.
+
+## JSON Structure (output of triage_writer)
 
 ```json
 {
@@ -25,7 +29,8 @@ Example (repo "my-app", risk score 72):
     "false_positives_filtered": 120,
     "duplicates": 25,
     "ai_only_findings": 1,
-    "deep_analysis_performed": true
+    "deep_analysis_performed": true,
+    "assembled_by": "triage_writer/v1"
   },
   "findings": [],
   "composite_vulnerabilities": []
@@ -45,6 +50,40 @@ Example (repo "my-app", risk score 72):
 - `duplicates`: integer
 - `ai_only_findings`: integer
 - `deep_analysis_performed`: boolean
+- `assembled_by`: string — always `"triage_writer/v1"`, stamped by `core.ai.triage_writer`. Required by the validator.
+
+## Compact classifications (input to triage_writer)
+
+The agent writes this small file; `triage_writer` reads it and produces the full triage-results JSON above.
+
+```json
+{
+  "findings": [
+    {
+      "omnileak_ids": ["<raw_id_1>", "<raw_id_2>"],
+      "classification": "TRUE_POSITIVE",
+      "severity": "CRITICAL",
+      "category": "AWS Access Key",
+      "on_disk": true,
+      "confidence": "high",
+      "environment": "production",
+      "remediation": "ROTATE_IMMEDIATELY",
+      "effort": "quick",
+      "fp_reason": null,
+      "duplicate_of": null
+    }
+  ],
+  "composite_vulnerabilities": []
+}
+```
+
+Rules:
+- **One entry per distinct credential.** If the same secret value appears at multiple paths/commits/tools, group all raw IDs into one entry's `omnileak_ids`.
+- **Do NOT include pre-filter auto-FPs here** — `triage_writer` pulls those from `prefiltered.json`.
+- **TRUE_POSITIVE** entries: fill all fields (`severity`, `confidence`, `environment`, `remediation`, `effort`).
+- **FALSE_POSITIVE** entries: set `severity`/`confidence`/`environment`/`remediation`/`effort` to `null`, fill `fp_reason`.
+- **DUPLICATE** entries: list only the duplicate's raw ID in `omnileak_ids`, set `duplicate_of` to the primary's sequential `id` (1-based, matching the order of the primary in your `findings` list).
+- Any raw ID not listed here and not in `prefiltered.json`'s auto_fp gets turned into a DUPLICATE with no primary by the writer. The validator fails if coverage is incomplete, so verify every `needs_triage` ID is represented.
 
 ## Finding Fields
 

@@ -22,9 +22,11 @@ You are triaging Omnileak scan results for a single repository. Your job is to c
 - Do NOT upload findings, secrets, or repo content to any external service.
 - All output stays local on disk.
 - Do NOT ask for any confirmations — proceed automatically through every step.
-- **NEVER delegate classification to a batch script.** Every finding must be analyzed inline.
+- **NEVER delegate classification to a batch script.** Do not write Python (or any) scripts to `/tmp/`, the repo, or the output directory that classify findings in bulk. Every finding's verdict must come from you reading the actual `secret_value` and, when a repo path is available, the source file. The ONLY scripts allowed to run are Omnileak's built-in tools: `core.ai.prefilter`, `core.ai.triage_writer`, `core.ai.triage_validator`, `core.ai.triage_reporter`, `core.ai.manifest`. Short inline `python3 -c "..."` / heredocs that *inspect* data (counting, filtering for display, checking on_disk) are fine; anything that produces classifications is not.
+- **Volume is not an excuse.** If the repo has hundreds of `needs_triage` findings and you're tempted to write a classifier script: don't. Work through inline batches of 200 (see Step 2). Short sessions with fewer findings per batch beat one big script every time — the script's substring rules will miss the TP-bias and source-file reads the pipeline depends on.
 - **NEVER classify by secret_type alone.** Read the actual `secret_value`.
 - **Read source files during classification, not after.**
+- **Assemble the final JSON with `triage_writer`, not by hand.** The validator rejects any triage JSON whose `meta.assembled_by` is not `"triage_writer/v1"` (see Step 4).
 
 ## Pipeline
 
@@ -53,21 +55,60 @@ Note the `needs_triage` findings (require AI classification) and `auto_fp` findi
 7. Try to match one of the 8 specific FP conditions in triage-rules.md
 8. If no FP condition matches → **classify as TP**
 
-**Batching:** If more than 200 findings, work in batches of 200.
+**Batching:** If more than 200 findings, work in batches of 200 — classify each batch inline, appending to your in-memory list of verdicts, then write them all to `classifications.json` in Step 4. Do not write a script to process batches; process them in conversation one batch at a time. Reading every `secret_value` and (when possible) source file is the point — a substring-rule script defeats the whole pipeline.
 
 ### 3. Deep analysis (if repo path available)
 
 If `{{repo_path}}` is not empty, read `~/.claude/commands/scan-secrets/deep-analysis.md` and perform checks against actual source files. Add any AI-only findings.
 
-### 4. Generate JSON
+### 4. Emit compact classifications, then assemble with triage_writer
 
-Write the triage JSON to `{{output_dir}}/{{repo_name}}_triage-results_<risk_score>.json` with ALL findings:
-- AI-classified TPs and FPs from step 2
-- Auto-FPs from the pre-filter
-- DUPLICATEs from deduplication
-- AI-only findings from step 3
+**Do not hand-write the full triage-results JSON.** Emit a small `classifications.json` containing only your verdicts + composites, then let `triage_writer` assemble the full output (it copies raw fields, fills defaults, computes risk score, stamps `meta.assembled_by`).
 
-The total finding count must match the raw Omnileak count — nothing silently dropped.
+**4a. Write `{{output_dir}}/classifications.json`** with this schema:
+
+```json
+{
+  "findings": [
+    {
+      "omnileak_ids": ["<raw_id_1>", "<raw_id_2>"],
+      "classification": "TRUE_POSITIVE",
+      "severity": "CRITICAL",
+      "category": "AWS Access Key",
+      "on_disk": true,
+      "confidence": "high",
+      "environment": "production",
+      "remediation": "ROTATE_IMMEDIATELY",
+      "effort": "quick",
+      "fp_reason": null,
+      "duplicate_of": null
+    }
+  ],
+  "composite_vulnerabilities": [ /* from Step 3, if any */ ]
+}
+```
+
+Rules:
+- One entry per *distinct credential*. Group raw IDs that share the same secret value into one entry's `omnileak_ids`.
+- For `FALSE_POSITIVE`: set `severity`, `confidence`, `environment`, `remediation`, `effort` to `null`; fill `fp_reason`.
+- For `DUPLICATE`: list only the duplicate's raw ID in `omnileak_ids`; set `duplicate_of` to the primary's *sequential id-to-be* (1-based, matching the order of your TP/FP entries).
+- Do NOT include auto-FP findings from the pre-filter here — `triage_writer` pulls those from `{{prefiltered_json_path}}` directly.
+- Any raw ID you don't list ends up as a DUPLICATE with no primary. The validator will fail if IDs aren't covered, so verify every `needs_triage` ID is in exactly one entry.
+
+**4b. Run `triage_writer`:**
+
+```bash
+cd {{omnileak_path}} && python3 -m core.ai.triage_writer \
+  --raw {{aggregated_json_path}} \
+  --classifications {{output_dir}}/classifications.json \
+  --prefilter {{prefiltered_json_path}} \
+  --repo {{repo_name}} \
+  --repo-url {{repo_url}} \
+  --last-commit {{last_commit}} \
+  --out {{output_dir}}
+```
+
+It prints the output path: `{{output_dir}}/{{repo_name}}_triage-results_<risk_score>.json`. Capture `<risk_score>` from the filename — you need it for Step 6. The writer stamps `meta.assembled_by="triage_writer/v1"`; the validator in Step 5 checks this.
 
 ### 5. Validate + Excel
 

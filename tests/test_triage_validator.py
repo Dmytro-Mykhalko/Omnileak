@@ -42,6 +42,7 @@ def _valid_triage(findings=None, composites=None, meta_overrides=None):
         "true_positives": tp_count,
         "false_positives_filtered": fp_count,
         "duplicates": dup_count,
+        "assembled_by": "triage_writer/v1",
     }
     if meta_overrides:
         meta.update(meta_overrides)
@@ -280,3 +281,24 @@ class TestFileNaming:
         path = _write(tmp_path, data, "wrong_name.json")
         errors = validate(path)
         assert any("file naming" in e for e in errors)
+
+
+class TestAssembledByMarker:
+    def test_correct_marker_passes(self, tmp_path):
+        data = _valid_triage()
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert not any("assembled_by" in e for e in errors)
+
+    def test_missing_marker_flagged(self, tmp_path):
+        data = _valid_triage()
+        del data["meta"]["assembled_by"]
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert any("assembled_by" in e and "missing" in e for e in errors)
+
+    def test_wrong_marker_flagged(self, tmp_path):
+        data = _valid_triage(meta_overrides={"assembled_by": "my_custom_script"})
+        path = _write(tmp_path, data)
+        errors = validate(path)
+        assert any("my_custom_script" in e for e in errors)
