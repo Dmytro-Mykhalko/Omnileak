@@ -62,7 +62,7 @@ This skill reads detailed instructions from `~/.claude/commands/scan-secrets/`:
 | `json-schema.md` | Output JSON schema, field rules, risk score, naming | Step 5c (JSON output) |
 | `reporting.md` | Validator, Excel, markdown report, batch improvements | Steps 5d-5e / 5.2 |
 | `manifest-schema.md` | Manifest format for resumable multi-repo | Multi-repo dispatch |
-| `agent-prompt.md` | Self-contained prompt for sub-agents (legacy, see iterative loop) | Reference only |
+| `agent-prompt.md` | Self-contained prompt for per-repo sub-agents | Multi-repo Step 5.1c |
 
 ## Instructions
 
@@ -173,15 +173,13 @@ If validation fails, fix the JSON and re-validate.
 
 **5f. Summary.** Print: mode, risk score, TP/FP/DUP counts with severity breakdown, file paths.
 
-#### Multi-repo: iterative loop with manifest
+#### Multi-repo: sequential sub-agent dispatch
 
-**One agent processes repos sequentially, one at a time.** No parallel sub-agent dispatch. This keeps classification rules in fresh context and enables resumption.
+**Each repo is triaged by a fresh sub-agent with clean context.** This prevents context accumulation across repos — agent quality stays constant whether it's repo 1 or repo 39. The orchestrator (this conversation) stays lightweight: it only manages the manifest and dispatches agents.
 
 ##### Step 5.0: Create manifest
 
 **Skip this step if resuming** (manifest already exists).
-
-Step 4 already ran per-repo pre-filters. Do NOT re-run them. Build the manifest from the existing `prefiltered.json` files:
 
 Read `~/.claude/commands/scan-secrets/manifest-schema.md` to understand the format. Create the manifest:
 ```bash
@@ -194,85 +192,51 @@ print(f'Created manifest: {manifest[\"path\"]} ({manifest[\"total_repos\"]} repo
 "
 ```
 
-Note: `prefilter_batch` is idempotent — if `prefiltered.json` files already exist from Step 4, this overwrites them with identical content. The main purpose here is to collect the summaries into a manifest.
+##### Step 5.1: Sequential dispatch loop
 
-##### Step 5.1: Iterative loop
+**FOR each repo in the manifest (priority order), while pending repos remain:**
 
-**FOR each repo in the manifest (priority order), while next_pending returns a repo:**
+**a. Pick next repo + update manifest**
 
-At the **start of EVERY iteration**, re-read these files to keep rules in fresh context:
-1. Read `~/.claude/commands/scan-secrets/triage-rules.md`
-2. Read `~/.claude/commands/scan-secrets/json-schema.md`
-
-Then execute these sub-steps:
-
-**a. Update manifest → in_progress**
 ```bash
 cd <omnileak_path> && python3 -c "
-from core.ai.manifest import update_repo
+from core.ai.manifest import load_manifest, next_pending, update_repo
 from datetime import datetime, timezone
-update_repo('<manifest_path>', '<repo_name>', status='in_progress',
-            started_at=datetime.now(timezone.utc).isoformat())
+m = load_manifest('<manifest_path>')
+repo = next_pending(m)
+if repo:
+    update_repo(m['path'], repo['name'], status='in_progress',
+                started_at=datetime.now(timezone.utc).isoformat())
+    print(f'Next: {repo[\"name\"]} (tier={repo[\"tier\"]}, needs_triage={repo[\"raw_findings\"] - repo[\"pre_filtered\"]})')
+else:
+    print('ALL_DONE')
 "
 ```
 
-Print status: `[<completed+1>/<total>] <repo_name> — reading pre-filtered findings (<N> to triage)...`
+If `ALL_DONE` → go to Step 5.2.
 
-**b. Read pre-filtered findings**
+**b. Skip-tier handling**
 
-Read this repo's `prefiltered.json`. Note `needs_triage` count.
+If `needs_triage` is 0 (skip tier): handle inline — write a triage JSON with ALL raw findings as `FALSE_POSITIVE` (auto-FP categories from pre-filter), run Excel generation, update manifest to done, print progress line. Do NOT spawn an agent for skip-tier repos.
 
-**c. Skip-tier handling**
+**c. Spawn sub-agent**
 
-If `needs_triage` is 0: write a triage JSON with ALL raw findings as `FALSE_POSITIVE` (using auto-FP categories from the pre-filter). Every finding must have `fp_reason` starting with `"Auto-filtered: "`. These must appear in the Excel. Set risk_score=0. Skip to step (h).
+Read `~/.claude/commands/scan-secrets/agent-prompt.md`. Replace all `{{placeholders}}` with the actual values for this repo. Spawn the agent:
 
-**d. Classify findings with source verification**
-
-Print status: `[<completed+1>/<total>] <repo_name> — classifying findings...`
-
-Deduplicate `needs_triage` findings (group same secret across commits/tools → one primary + DUPLICATEs). For each finding:
-1. **Read the pre-filter enrichment** — check `tp_hint`, `high_entropy`, `sensitivity`, `decoded_docker_creds` fields. These guide your classification but don't decide it.
-2. **Examine the actual secret_value** — not just the secret_type. High-entropy strings (entropy >= 4.0, length >= 20) in infrastructure/production files are almost always real.
-3. **If repo path available**: read the source file to verify the value in context, check on_disk status, determine environment from the actual file structure.
-4. Classify as TP or FP based on the value, not the type name.
-
-If more than 200 findings, work in batches of 200.
-
-**e. Cross-file deep analysis**
-
-Print status: `[<completed+1>/<total>] <repo_name> — deep analysis...`
-
-If repo path is available, read `~/.claude/commands/scan-secrets/deep-analysis.md` and check for composite vulnerabilities, credential reuse across environments, Docker base64 decoding, and secrets in files tools typically miss (.sql dumps, .dist files, CI workflows).
-
-**f. Write triage JSON**
-
-Print status: `[<completed+1>/<total>] <repo_name> — writing triage JSON...`
-
-Write the complete triage JSON with ALL findings: AI-classified TPs/FPs + auto-FPs from pre-filter + DUPs. Total count must equal raw Omnileak count.
-
-**g. Validate (HARD GATE)**
-
-Print status: `[<completed+1>/<total>] <repo_name> — validating...`
-
-```bash
-cd <omnileak_path> && python3 -m core.ai.triage_validator <json_path> --raw <aggregated_json>
+```
+Agent({
+  description: "Triage <repo_name>",
+  prompt: "<filled agent-prompt.md content>"
+})
 ```
 
-- If validation **passes** → continue to step (h).
-- If validation **fails** → fix the JSON → re-validate (max 2 retries).
-- If still failing after 2 retries → update manifest status to `"failed"` with the error message → move to next repo. **Never skip validation. Never continue on failure without marking it.**
+**Important:** Spawn ONE agent at a time. Wait for it to complete before starting the next. This ensures each agent gets a fresh, clean context — no accumulated findings from other repos.
 
-**h. Excel + markdown reports**
+**d. Handle agent result**
 
-Print status: `[<completed+1>/<total>] <repo_name> — generating Excel + reports...`
-
-```bash
-cd <omnileak_path> && python3 -m core.ai.triage_reporter <json_path>
-```
-
-Read `~/.claude/commands/scan-secrets/reporting.md` → write the per-repo markdown triage report. Do NOT write per-repo pipeline improvements — that is done once at the end.
-
-**i. Update manifest → done**
+When the agent completes:
+- If it produced a valid triage JSON → update manifest to `done` with risk_score, tps, fps, dups, duration
+- If it failed → update manifest to `failed` with the error message
 
 ```bash
 cd <omnileak_path> && python3 -c "
@@ -285,16 +249,17 @@ update_repo('<manifest_path>', '<repo_name>', status='done',
 "
 ```
 
-**j. Print progress line**
+**e. Print progress line**
 
-After completing a repo, print:
 ```
 [<completed>/<total>] <repo_name> | risk=<score> | TP=<n> FP=<n> DUP=<n> | validated=<bool> | <duration>s
 ```
 
+**f. Loop back** to step (a) for the next repo.
+
 ##### Step 5.2: Pipeline improvements (once for entire scan)
 
-After the loop completes, read `~/.claude/commands/scan-secrets/reporting.md` and write **one** `<output_directory>/pipeline-improvements.md` covering all repos. Aggregate patterns — do not repeat per-repo observations.
+After all repos are done, read `~/.claude/commands/scan-secrets/reporting.md` and write **one** `<output_directory>/pipeline-improvements.md` covering all repos. Aggregate patterns — do not repeat per-repo observations.
 
 ##### Step 5.3: Batch summary
 
