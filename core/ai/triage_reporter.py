@@ -148,10 +148,6 @@ def convert(json_path, excel_path=None):
 
     repo_url = meta.get("repo_url", "")
 
-    df_tp = df_all[df_all["classification"] == "TRUE_POSITIVE"].copy()
-    df_dup = df_all[df_all["classification"] == "DUPLICATE"].copy()
-    df_fp = df_all[df_all["classification"] == "FALSE_POSITIVE"].copy()
-
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         # Summary sheet
         summary_rows = [
@@ -174,22 +170,9 @@ def convert(json_path, excel_path=None):
 
         _write_sheet(writer, df_all, "All Findings", FINDING_COLUMNS, repo_url)
 
-        if not df_tp.empty:
-            _write_sheet(writer, df_tp, "True Positives", FINDING_COLUMNS, repo_url)
-
-        if not df_dup.empty:
-            _write_sheet(writer, df_dup, "Duplicates", FINDING_COLUMNS, repo_url)
-
-        if not df_fp.empty:
-            _write_sheet(writer, df_fp, "False Positives", FINDING_COLUMNS, repo_url)
-
-        if composites:
-            df_comp = pd.DataFrame(composites)
-            _write_sheet(writer, df_comp, "Composite Vulns", COMPOSITE_COLUMNS)
-
     logger.info(
-        "Wrote triage Excel: %s (%d TPs, %d DUPs, %d FPs, %d composites)",
-        excel_path, len(df_tp), len(df_dup), len(df_fp), len(composites),
+        "Wrote triage Excel: %s (%d findings)",
+        excel_path, len(df_all),
     )
     return excel_path
 

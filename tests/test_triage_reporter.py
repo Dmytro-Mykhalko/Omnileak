@@ -11,7 +11,6 @@ from core.ai.triage_reporter import (
     _flatten_lists,
     _sort_findings,
     FINDING_COLUMNS,
-    COMPOSITE_COLUMNS,
 )
 from core.excel_utils import SECRET_VALUE_LIMIT
 
@@ -156,29 +155,7 @@ class TestSheetStructure:
         wb = load_workbook(xlsx)
         assert "Summary" in wb.sheetnames
         assert "All Findings" in wb.sheetnames
-        assert "True Positives" in wb.sheetnames
-        assert "False Positives" in wb.sheetnames
-        assert "Composite Vulns" in wb.sheetnames
-
-    def test_no_tp_sheet_when_all_fps(self, tmp_path):
-        json_path = _write_json(tmp_path, findings=[_make_fp(1), _make_fp(2)])
-        xlsx = convert(json_path)
-        wb = load_workbook(xlsx)
-        assert "True Positives" not in wb.sheetnames
-        assert "False Positives" in wb.sheetnames
-
-    def test_no_fp_sheet_when_all_tps(self, tmp_path):
-        json_path = _write_json(tmp_path, findings=[_make_tp(1), _make_tp(2)])
-        xlsx = convert(json_path)
-        wb = load_workbook(xlsx)
-        assert "True Positives" in wb.sheetnames
-        assert "False Positives" not in wb.sheetnames
-
-    def test_no_composite_sheet_when_empty(self, tmp_path):
-        json_path = _write_json(tmp_path, composites=[])
-        xlsx = convert(json_path)
-        wb = load_workbook(xlsx)
-        assert "Composite Vulns" not in wb.sheetnames
+        assert len(wb.sheetnames) == 2
 
 
 # ── convert() — empty / edge cases ──────────────────────────────────────────
@@ -371,30 +348,6 @@ class TestSanitization:
         assert df.iloc[0]["secret_value"] == "short_value"
 
 
-# ── Composite vulnerabilities sheet ──────────────────────────────────────────
-
-class TestCompositeVulns:
-    def test_composite_row_count(self, tmp_path):
-        json_path = _write_json(
-            tmp_path,
-            composites=[_make_composite(), _make_composite()],
-        )
-        xlsx = convert(json_path)
-        df = pd.read_excel(xlsx, sheet_name="Composite Vulns")
-        assert len(df) == 2
-
-    def test_composite_columns(self, tmp_path):
-        json_path = _write_json(tmp_path, composites=[_make_composite()])
-        xlsx = convert(json_path)
-        df = pd.read_excel(xlsx, sheet_name="Composite Vulns")
-        assert list(df.columns) == COMPOSITE_COLUMNS
-
-    def test_composite_lists_flattened(self, tmp_path):
-        json_path = _write_json(tmp_path, composites=[_make_composite()])
-        xlsx = convert(json_path)
-        df = pd.read_excel(xlsx, sheet_name="Composite Vulns")
-        assert df.iloc[0]["related_finding_ids"] == "1, 2"
-        assert "key.pem" in df.iloc[0]["files_involved"]
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -433,19 +386,6 @@ class TestFlattenLists:
 # ── Duplicate classification ─────────────────────────────────────────────────
 
 class TestDuplicates:
-    def test_dup_sheet_created(self, tmp_path):
-        findings = [_make_tp(1), _make_dup(2, duplicate_of=1)]
-        json_path = _write_json(tmp_path, findings=findings)
-        xlsx = convert(json_path)
-        wb = load_workbook(xlsx)
-        assert "Duplicates" in wb.sheetnames
-
-    def test_no_dup_sheet_when_none(self, tmp_path):
-        json_path = _write_json(tmp_path, findings=[_make_tp(1)])
-        xlsx = convert(json_path)
-        wb = load_workbook(xlsx)
-        assert "Duplicates" not in wb.sheetnames
-
     def test_dup_sort_order(self):
         """DUPs should sort between TPs and FPs."""
         df = pd.DataFrame([
@@ -467,13 +407,6 @@ class TestDuplicates:
         assert list(df["classification"]) == [
             "TRUE_POSITIVE", "DUPLICATE", "FALSE_POSITIVE"
         ]
-
-    def test_dup_has_duplicate_of_field(self, tmp_path):
-        findings = [_make_tp(1), _make_dup(2, duplicate_of=1)]
-        json_path = _write_json(tmp_path, findings=findings)
-        xlsx = convert(json_path)
-        df = pd.read_excel(xlsx, sheet_name="Duplicates")
-        assert df.iloc[0]["duplicate_of"] == 1
 
 
 # ── File naming ──────────────────────────────────────────────────────────────
@@ -558,18 +491,3 @@ class TestCommitHyperlinks:
         cell = ws.cell(row=2, column=commit_col)
         assert "/-/blob/" in cell.hyperlink.target
 
-    def test_hyperlinks_on_tp_sheet(self, tmp_path):
-        meta = _make_meta(repo_url="https://github.com/org/repo")
-        json_path = _write_json(tmp_path, findings=[_make_tp(1)], meta=meta)
-        xlsx = convert(json_path)
-        wb = load_workbook(xlsx)
-        ws = wb["True Positives"]
-
-        commit_col = None
-        for col in range(1, ws.max_column + 1):
-            if ws.cell(row=1, column=col).value == "commit":
-                commit_col = col
-                break
-
-        cell = ws.cell(row=2, column=commit_col)
-        assert cell.hyperlink is not None
