@@ -2,6 +2,17 @@
 
 This file contains only classification rules — what is a TP, FP, severity, confidence. Process flow (dedup, batching) is in the agent prompt.
 
+## TP-Bias Principle
+
+**When in doubt, classify as TRUE POSITIVE.** A false negative (real secret marked FP) is far worse than a false positive (noise marked TP). Developers will re-check TPs during remediation — they won't re-check FPs. The cost of a missed credential leak is orders of magnitude higher than the cost of a developer spending 30 seconds verifying a flagged finding.
+
+Rules:
+- If you're unsure whether a value is a placeholder or real → **TP**
+- If "test" appears in the filename but the file contains real-looking credentials → **TP**
+- If the file is a certificate, private key, or PEM file → **TP** (always, regardless of path)
+- If the value has high entropy and you can't prove it's fake → **TP**
+- Only classify as FP when you have **positive evidence** that the value is not a real credential (e.g., it's a known placeholder, a translation string, a code pattern, or a variable name)
+
 ## Pre-Filter Enrichment
 
 The pre-filter adds hints to each finding in `needs_triage`. **Use these but don't blindly trust them:**
@@ -82,6 +93,47 @@ Files in these paths contain **real deployment configuration**. High-entropy str
 - `**/deploy/**` — Deployment configs
 - `**/docker-compose*.yml` — Docker Compose
 - `**/.env*` — Environment files (check if it's `.env.example` vs `.env.production`)
+
+## Certificate and Key File Paths — Always TP
+
+Any file that IS a certificate or private key is a TRUE POSITIVE regardless of where it lives:
+
+- `**/*.pem`, `**/*.key`, `**/*.p12`, `**/*.pfx`, `**/*.jks`
+- `**/certificates/**`, `**/certs/**`, `**/ssl/**`, `**/tls/**`
+- `**/nginx/certificates/**`, `**/letsencrypt/**`
+- `**/privkey*.pem`, `**/fullchain*.pem`
+- `**/.ssh/id_*`, `**/.ssh/authorized_keys`
+
+These are real cryptographic materials. Do NOT dismiss them because "it's just a certificate file" — that's exactly what makes it sensitive.
+
+## Strict DUPLICATE Rules
+
+A DUPLICATE means the **exact same credential value** appearing in a different location (different commit, different tool detected it). It does NOT mean:
+- A different credential of the same type
+- A similar-looking key in a different file
+- The same secret_type but different secret_value
+
+**Before marking as DUPLICATE, verify:**
+1. The `secret_value` is character-for-character identical (or one contains the other)
+2. If the values differ at all — even by one character — they are SEPARATE findings, not duplicates
+3. If the file paths are different AND the values are different → two separate TPs, not a primary + duplicate
+
+When grouping for dedup: group by **normalized secret value**, NOT by secret_type or file_path.
+
+## Dangerous FP Patterns — Do NOT Make These Mistakes
+
+These are patterns where the AI commonly misclassifies TPs as FPs. Check each one:
+
+| Mistake | Why it's wrong | Correct classification |
+|---|---|---|
+| "test" in filename → FP | Files like `page-test_temp.php`, `test_config.yml` often contain real credentials used in test environments | Read the actual value. High-entropy string = TP. |
+| Private key file → FP | `privkey4.pem`, `server.key` are real keys, not patterns | Always TP. The file IS the secret. |
+| "Generic pattern match" → FP | Scanner's rule name doesn't determine reality | Read the value. `password: "Kx9mB2vL..."` is real regardless of rule name. |
+| Same secret_type → DUP | Two AWS keys are not duplicates just because both are AWS keys | Compare actual values. Different value = separate finding. |
+| History-only → FP | Secret removed from HEAD but still in git history | Still TP. Git history is recoverable. Needs rotation. |
+| `.php` file → FP | PHP files are application code, not test fixtures | Read the value. Credentials in PHP config files are real. |
+| Commented-out secret → FP | `// password: "realpass123"` still exposes the credential | TP if the value is real. Comments are readable. |
+| `.sql` file → FP | SQL dumps contain production data | TP if credential-like values in INSERT/UPDATE statements. |
 
 ## Connection String Rules
 

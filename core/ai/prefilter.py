@@ -92,6 +92,10 @@ _SENSITIVITY_RULES = [
     (re.compile(r"(?:^|/)(?:infrastructure|ansible|deploy|terraform)/"), "infrastructure"),
     (re.compile(r"(?:^|/)docker-compose.*\.ya?ml$"), "infrastructure"),
     (re.compile(r"(?:^|/)templates/secrets/"), "infrastructure"),
+    (re.compile(r"(?:^|/)(?:certificates|certs|ssl|tls|letsencrypt|nginx/certificates)/"), "certificate"),
+    (re.compile(r"(?:^|/)\.ssh/"), "certificate"),
+    (re.compile(r"\.(?:pem|key|p12|pfx|jks)$"), "certificate"),
+    (re.compile(r"(?:^|/)privkey\d*\.pem$"), "certificate"),
     (re.compile(r"(?:^|/)\.env"), "config"),
     (re.compile(r"(?:^|/)(?:test|spec|__tests__|mock|__mocks__)/"), "test"),
 ]

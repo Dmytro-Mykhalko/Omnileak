@@ -314,6 +314,26 @@ class TestEnrichment:
         result = prefilter([f])
         assert result["needs_triage"][0]["sensitivity"] == "config"
 
+    def test_sensitivity_certificate_pem(self):
+        f = _finding("nginx/certificates/archive/example.com/privkey4.pem")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "certificate"
+
+    def test_sensitivity_certificate_key(self):
+        f = _finding("ssl/server.key")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "certificate"
+
+    def test_sensitivity_ssh_key(self):
+        f = _finding(".ssh/id_rsa")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "certificate"
+
+    def test_sensitivity_letsencrypt(self):
+        f = _finding("letsencrypt/live/example.com/fullchain.pem")
+        result = prefilter([f])
+        assert result["needs_triage"][0]["sensitivity"] == "certificate"
+
     def test_sensitivity_counts_in_summary(self):
         findings = [
             _finding("values_prod/a.yaml", "f1"),
